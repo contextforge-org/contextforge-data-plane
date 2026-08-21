@@ -93,10 +93,6 @@ where
         message: "Routing problem... backend not found".into(),
         data: None,
     })?;
-    let tool_schema = backend
-        .tool_schemas
-        .get(&tool_name)
-        .ok_or_else(|| ErrorData::internal_error(format!("Missing published schema for tool '{tool_name}'"), None))?;
     let service_name = backend_name.clone();
     let pre_result = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
         plugin_runtime.before_tool_call(&request, &tool_name, &service_name).await?
@@ -106,14 +102,9 @@ where
     let post_state = pre_result.state;
     let mut routed_request = request;
     pre_result.arguments.apply_to_request(&mut routed_request, &tool_name);
-    let mut backend_service = connect_backend_for_request(
-        mcp_service,
-        (&backend_name, backend),
-        Some(tool_schema),
-        virtual_host.backends.len() > 1,
-        &cx,
-    )
-    .await?;
+    let mut backend_service =
+        connect_backend_for_request(mcp_service, (&backend_name, backend), virtual_host.backends.len() > 1, &cx)
+            .await?;
 
     let progress_token = cx.meta.get_progress_token();
     let handle = backend_service
