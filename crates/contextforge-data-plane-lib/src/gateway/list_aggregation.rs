@@ -268,6 +268,7 @@ mod tests {
                     "url": "http://upstream:9000/mcp",
                     "passthrough_headers": [],
                     "allowed_tool_names": [],
+                    "tool_schemas": {},
                     "allowed_resource_names": [],
                     "allowed_prompt_names": []
                 }

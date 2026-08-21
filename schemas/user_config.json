@@ -73,8 +73,7 @@
           "additionalProperties": {
             "type": "object",
             "additionalProperties": true
-          },
-          "default": {}
+          }
         },
         "tool_name_aliases": {
           "type": "object",
@@ -101,6 +100,7 @@
         "url",
         "passthrough_headers",
         "allowed_tool_names",
+        "tool_schemas",
         "allowed_resource_names",
         "allowed_prompt_names"
       ]
