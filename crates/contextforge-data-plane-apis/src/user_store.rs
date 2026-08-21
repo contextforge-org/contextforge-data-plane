@@ -25,8 +25,6 @@ pub struct BackendMCPGateway {
     #[serde(default)]
     pub remove_headers: Vec<String>,
     pub allowed_tool_names: Vec<String>,
-    /// Input schemas keyed by the original upstream tool name.
-    pub tool_schemas: HashMap<String, serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub tool_name_aliases: HashMap<String, String>,
     pub allowed_resource_names: Vec<String>,

@@ -100,8 +100,7 @@ where
         PromptPreFetchResult::unchanged()
     };
     let mut backend_service =
-        connect_backend_for_request(mcp_service, (&backend_name, backend), virtual_host.backends.len() > 1, &cx)
-            .await?;
+        connect_backend_for_request(mcp_service, &backend_name, backend, virtual_host.backends.len() > 1, &cx).await?;
     let mut routed_request = request;
     pre_result.arguments.apply_to_request(&mut routed_request, &prompt_name);
     let response = backend_service.get_prompt(routed_request).await;

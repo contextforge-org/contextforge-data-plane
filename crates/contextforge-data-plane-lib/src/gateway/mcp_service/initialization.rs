@@ -199,14 +199,14 @@ fn merge_and_build_capabilities(server_capabilities: Vec<(String, Option<ServerC
 
 pub(super) async fn connect_backend_for_request<T>(
     mcp_service: &McpService<T>,
-    backend: (&str, &BackendMCPGateway),
+    backend_name: &str,
+    backend: &BackendMCPGateway,
     namespace_identifiers: bool,
     cx: &RequestContext<RoleServer>,
 ) -> Result<RunningService<RoleClient, GatewayBackendClient>, ErrorData>
 where
     T: UserSessionStore + Send + Sync + 'static,
 {
-    let (backend_name, backend) = backend;
     let mut headers = HashMap::new();
     let downstream_headers = cx.extensions.get::<Parts>().map(|parts| &parts.headers);
 
@@ -222,7 +222,6 @@ where
     }
 
     apply_header_config(&mut headers, backend, downstream_headers);
-    forward_mcp_param_headers(&mut headers, downstream_headers);
     crate::telemetry::inject_current_context(&mut headers);
 
     let config = StreamableHttpClientTransportConfig::with_uri(backend.url.to_string()).custom_headers(headers);
@@ -259,19 +258,6 @@ where
     })
 }
 
-fn forward_mcp_param_headers(
-    headers: &mut HashMap<http::HeaderName, http::HeaderValue>,
-    downstream: Option<&http::HeaderMap>,
-) {
-    let Some(downstream) = downstream else { return };
-    headers.extend(
-        downstream
-            .iter()
-            .filter(|(name, _)| mcp_standard_headers::is_param(name))
-            .map(|(name, value)| (name.clone(), value.clone())),
-    );
-}
-
 /// Apply a backend's header config to the upstream header map.
 fn apply_header_config(
     headers: &mut HashMap<http::HeaderName, http::HeaderValue>,
@@ -288,6 +274,12 @@ fn apply_header_config(
                 headers.insert(name, value.clone());
             }
         }
+        headers.extend(
+            downstream
+                .iter()
+                .filter(|(name, _)| mcp_standard_headers::is_param(name))
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
     }
     for (name, value) in &backend.add_headers {
         let (Ok(name), Ok(value)) = (http::HeaderName::from_bytes(name.as_bytes()), http::HeaderValue::from_str(value))
@@ -316,7 +308,7 @@ fn apply_header_config(
 /// - RMCP transport-reserved: `Mcp-Session-Id`, `Accept`, `Last-Event-Id`
 /// - MCP standard computed headers: `Mcp-Method`, `Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Param-*`
 ///
-/// Validated downstream `Mcp-Param-*` headers are forwarded separately and cannot be changed by backend config.
+/// Downstream `Mcp-Param-*` headers are forwarded automatically and cannot be changed by backend config.
 fn is_protected_header(name: &http::HeaderName) -> bool {
     const PROTECTED: &[&str] = &[
         "host",
@@ -369,7 +361,6 @@ mod tests {
             add_headers: add.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
             remove_headers: remove.iter().map(|s| (*s).to_owned()).collect(),
             allowed_tool_names: vec![],
-            tool_schemas: HashMap::new(),
             tool_name_aliases: HashMap::new(),
             allowed_resource_names: vec![],
             allowed_prompt_names: vec![],
@@ -478,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn validated_mcp_param_headers_are_forwarded_but_cannot_be_changed_by_backend_config() {
+    fn mcp_param_headers_are_forwarded_but_cannot_be_changed_by_backend_config() {
         let mut headers = HashMap::new();
         headers.insert(http::HeaderName::from_static("mcp-method"), http::HeaderValue::from_static("tools/call"));
         let ds = downstream(&[
@@ -499,8 +490,6 @@ mod tests {
         );
 
         apply_header_config(&mut headers, &cfg, Some(&ds));
-        forward_mcp_param_headers(&mut headers, Some(&ds));
-
         assert_eq!(headers[&http::HeaderName::from_static("mcp-method")], "tools/call");
         assert_eq!(headers[&http::HeaderName::from_static("mcp-param-user")], "client-user");
         assert!(!headers.contains_key(&http::HeaderName::from_static("mcp-name")));

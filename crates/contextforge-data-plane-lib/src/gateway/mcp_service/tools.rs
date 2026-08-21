@@ -99,12 +99,11 @@ where
     } else {
         ToolPreCallResult::unchanged()
     };
+    let mut backend_service =
+        connect_backend_for_request(mcp_service, &backend_name, backend, virtual_host.backends.len() > 1, &cx).await?;
     let post_state = pre_result.state;
     let mut routed_request = request;
     pre_result.arguments.apply_to_request(&mut routed_request, &tool_name);
-    let mut backend_service =
-        connect_backend_for_request(mcp_service, (&backend_name, backend), virtual_host.backends.len() > 1, &cx)
-            .await?;
 
     let progress_token = cx.meta.get_progress_token();
     let handle = backend_service

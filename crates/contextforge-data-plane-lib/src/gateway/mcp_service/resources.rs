@@ -97,8 +97,7 @@ where
 
     let service_name = backend_name.clone();
     let mut backend_service =
-        connect_backend_for_request(mcp_service, (&backend_name, backend), virtual_host.backends.len() > 1, &cx)
-            .await?;
+        connect_backend_for_request(mcp_service, &backend_name, backend, virtual_host.backends.len() > 1, &cx).await?;
 
     let mut routed_request = request;
     routed_request.uri = resource_uri;
