@@ -67,6 +67,15 @@
             "type": "string"
           }
         },
+        "tool_schemas": {
+          "description": "Input schemas keyed by the original upstream tool name.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "default": {}
+        },
         "tool_name_aliases": {
           "type": "object",
           "additionalProperties": {

@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex as StdMutex, OnceLock},
+    sync::{
+        Arc, Mutex as StdMutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -49,6 +52,7 @@ pub(crate) struct BackendObservation {
 #[derive(Clone, Default)]
 pub(crate) struct BackendState {
     pub(crate) calls: Arc<StdMutex<Vec<BackendObservation>>>,
+    pub(crate) list_tool_calls: Arc<AtomicUsize>,
     pub(crate) prompts: Arc<StdMutex<Vec<BackendObservation>>>,
     pub(crate) cancellations: Arc<StdMutex<Vec<String>>>,
     pub(crate) events: Arc<StdMutex<Vec<&'static str>>>,
@@ -99,6 +103,13 @@ fn optional_text_tool() -> Tool {
     .expect("optional_text input schema is an object")
     .clone();
     Tool::new("optional_text", "Accept optional text", input_schema)
+}
+
+fn published_tool_schemas() -> HashMap<String, Map<String, Value>> {
+    [sum_tool(), reflect_text_tool(), optional_text_tool()]
+        .into_iter()
+        .map(|tool| (tool.name.to_string(), tool.input_schema.as_ref().clone()))
+        .collect()
 }
 
 impl ServerHandler for TestBackend {
@@ -155,6 +166,7 @@ impl ServerHandler for TestBackend {
         _request: Option<PaginatedRequestParams>,
         _cx: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        self.state.list_tool_calls.fetch_add(1, Ordering::Relaxed);
         Ok(ListToolsResult::with_all_items(vec![sum_tool(), reflect_text_tool(), optional_text_tool()]))
     }
 
@@ -402,6 +414,7 @@ async fn start_gateway_with_state(
                                 add_headers: HashMap::default(),
                                 remove_headers: Vec::new(),
                                 allowed_tool_names: Vec::new(),
+                                tool_schemas: published_tool_schemas(),
                                 tool_name_aliases: HashMap::new(),
                                 allowed_resource_names: Vec::new(),
                                 allowed_prompt_names: Vec::new(),

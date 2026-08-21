@@ -44,6 +44,7 @@ use crate::{
         claims_id::claims_layer,
         mcp_header_limits::{McpStandardHeaderLimits, mcp_header_limits_layer},
         mcp_origin::mcp_origin_layer,
+        mcp_param_validation::mcp_param_validation_layer,
         session_id::{SessionIdState, session_id_layer},
         user_config_store::user_config_store_layer,
         virtual_host_config::virtual_host_config_layer,
@@ -115,6 +116,7 @@ impl Gateway {
         };
 
         let reqwest_backend_client = reqwest::Client::try_from(&config)?;
+        let max_request_body_bytes = streamable_config.max_request_body_bytes;
 
         // Create streamable HTTP service
         let mcp_service: StreamableHttpService<McpService<LocalUserSessionStore>, LocalSessionManager> =
@@ -162,6 +164,7 @@ impl Gateway {
 
         let app = axum::Router::new()
             .nest_service("/servers/{virtual_host_name}/mcp", mcp_service)
+            .layer(middleware::from_fn_with_state(max_request_body_bytes, mcp_param_validation_layer))
             .layer(middleware::from_fn(virtual_host_config_layer))
             .layer(middleware::from_fn_with_state(mcp_add_state.clone(), user_config_store_layer))
             .layer(middleware::from_fn_with_state(session_id_state, session_id_layer))
