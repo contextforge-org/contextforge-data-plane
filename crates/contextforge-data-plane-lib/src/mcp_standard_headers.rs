@@ -22,7 +22,7 @@ fn is_exact(name: &HeaderName, expected: &str) -> bool {
     name.as_str().eq_ignore_ascii_case(expected)
 }
 
-fn is_param(name: &HeaderName) -> bool {
+pub(crate) fn is_param(name: &HeaderName) -> bool {
     name.as_str()
         .get(..HEADER_MCP_PARAM_PREFIX.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(HEADER_MCP_PARAM_PREFIX))

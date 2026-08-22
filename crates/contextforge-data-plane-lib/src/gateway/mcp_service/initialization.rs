@@ -274,6 +274,12 @@ fn apply_header_config(
                 headers.insert(name, value.clone());
             }
         }
+        headers.extend(
+            downstream
+                .iter()
+                .filter(|(name, _)| mcp_standard_headers::is_param(name))
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
     }
     for (name, value) in &backend.add_headers {
         let (Ok(name), Ok(value)) = (http::HeaderName::from_bytes(name.as_bytes()), http::HeaderValue::from_str(value))
@@ -301,6 +307,8 @@ fn apply_header_config(
 /// - Non-standard hop-by-hop: `Proxy-Connection` (must not cross gateway boundary)
 /// - RMCP transport-reserved: `Mcp-Session-Id`, `Accept`, `Last-Event-Id`
 /// - MCP standard computed headers: `Mcp-Method`, `Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Param-*`
+///
+/// Downstream `Mcp-Param-*` headers are forwarded automatically and cannot be changed by backend config.
 fn is_protected_header(name: &http::HeaderName) -> bool {
     const PROTECTED: &[&str] = &[
         "host",
@@ -461,15 +469,14 @@ mod tests {
     }
 
     #[test]
-    fn computed_mcp_headers_cannot_be_passed_through_added_or_removed() {
+    fn mcp_param_headers_are_forwarded_but_cannot_be_changed_by_backend_config() {
         let mut headers = HashMap::new();
         headers.insert(http::HeaderName::from_static("mcp-method"), http::HeaderValue::from_static("tools/call"));
-        headers.insert(http::HeaderName::from_static("mcp-param-user"), http::HeaderValue::from_static("computed"));
         let ds = downstream(&[
             ("Mcp-Method", "wrong/method"),
             ("Mcp-Name", "wrong-tool"),
             ("Mcp-Protocol-Version", "2020-01-01"),
-            ("Mcp-Param-User", "wrong-user"),
+            ("Mcp-Param-User", "client-user"),
         ]);
         let cfg = backend(
             &["mcp-method", "mcp-name", "mcp-protocol-version", "mcp-param-user"],
@@ -483,9 +490,8 @@ mod tests {
         );
 
         apply_header_config(&mut headers, &cfg, Some(&ds));
-
         assert_eq!(headers[&http::HeaderName::from_static("mcp-method")], "tools/call");
-        assert_eq!(headers[&http::HeaderName::from_static("mcp-param-user")], "computed");
+        assert_eq!(headers[&http::HeaderName::from_static("mcp-param-user")], "client-user");
         assert!(!headers.contains_key(&http::HeaderName::from_static("mcp-name")));
         assert!(!headers.contains_key(&http::HeaderName::from_static("mcp-protocol-version")));
     }

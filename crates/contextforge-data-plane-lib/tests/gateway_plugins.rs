@@ -115,6 +115,28 @@ fn raw_mcp_request(
     request
 }
 
+fn client_with_parameter_headers(a: &'static str, b: &'static str) -> reqwest::Client {
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {}", token(TEST_USER_ID))).expect("valid auth header"),
+    );
+    headers.insert("Mcp-Param-A", http::HeaderValue::from_static(a));
+    headers.insert("Mcp-Param-B", http::HeaderValue::from_static(b));
+    reqwest::Client::builder().default_headers(headers).build().expect("client builds")
+}
+
+fn last_backend_request_headers(gateway: &RunningGateway) -> http::HeaderMap {
+    gateway
+        .backend_state
+        .request_headers
+        .lock()
+        .expect("backend request headers lock poisoned")
+        .last()
+        .cloned()
+        .expect("backend received a request")
+}
+
 fn raw_tool_call(tool_name: &str, request_id: i64, progress_token: &str) -> Value {
     serde_json::json!({
         "method": "tools/call",
@@ -375,16 +397,20 @@ async fn disabled_runtime_does_not_invoke_registered_plugin() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn stateless_tool_call_reaches_backend_without_session() {
+async fn stateless_tool_call_forwards_parameter_headers_without_interpretation() {
     let gateway = start_gateway(TEST_USER_ID, false, Arc::new(CpexRuntimeRegistry::default())).await;
     let service = support::connect_modern_client(
         gateway.gateway_url(),
-        support::create_client(TEST_USER_ID),
+        client_with_parameter_headers("9", "2"),
         support::modern_client_info(),
     )
     .await;
     let result = service.call_tool(sum_request("sum", 1, 2)).await.expect("stateless tool call succeeds");
+
     assert_eq!("3", text(&result));
+    let headers = last_backend_request_headers(&gateway);
+    assert_eq!("9", headers["Mcp-Param-A"]);
+    assert_eq!("2", headers["Mcp-Param-B"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -597,16 +623,22 @@ async fn secrets_detection_pre_hook_respects_field_allowlist() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-async fn pre_hook_modifies_backend_arguments_without_rerouting_tool() {
+async fn pre_hook_rewrites_payload_without_changing_forwarded_parameter_headers() {
     let plugin = Arc::new(TestPlugin::new("pre", vec![cmf_hook_names::TOOL_PRE_INVOKE]).with_pre_rewrite());
     let observations = plugin.observations();
     let runtime = runtime_with_pre(plugin).await;
 
     let gateway = start_gateway(TEST_USER_ID, true, runtime).await;
-    let service = gateway.connect(TEST_USER_ID).await;
+    let service = support::connect_modern_client(
+        gateway.gateway_url(),
+        client_with_parameter_headers("1", "2"),
+        support::modern_client_info(),
+    )
+    .await;
     let result = service.call_tool(sum_request("sum", 1, 2)).await.unwrap();
 
     assert_eq!((REWRITTEN_SUM_A + REWRITTEN_SUM_B).to_string(), text(&result));
+    assert_eq!("1", last_backend_request_headers(&gateway)["Mcp-Param-A"]);
     let backend_calls = gateway.backend_state.calls.lock().expect("backend calls lock poisoned");
     assert_eq!("sum", backend_calls[0].tool_name);
     assert_eq!(Some(&Value::from(REWRITTEN_SUM_A)), backend_calls[0].args.as_ref().and_then(|args| args.get("a")));

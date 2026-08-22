@@ -11,7 +11,7 @@ use contextforge_data_plane_apis::{
 use contextforge_data_plane_cpex::CpexRuntimeRegistry;
 use contextforge_data_plane_lib::{Config, Gateway, UpstreamConnectionMode, UserConfigStore, UserConfigStoreType};
 use futures::FutureExt;
-use http::{HeaderMap, HeaderValue};
+use http::{HeaderMap, HeaderValue, request::Parts};
 use rmcp::{
     ErrorData, RoleClient, RoleServer, ServerHandler, ServiceExt,
     model::{
@@ -48,6 +48,7 @@ pub(crate) struct BackendObservation {
 #[derive(Clone, Default)]
 pub(crate) struct BackendState {
     pub(crate) calls: Arc<StdMutex<Vec<BackendObservation>>>,
+    pub(crate) request_headers: Arc<StdMutex<Vec<HeaderMap>>>,
     pub(crate) prompts: Arc<StdMutex<Vec<BackendObservation>>>,
     pub(crate) cancellations: Arc<StdMutex<Vec<String>>>,
     pub(crate) events: Arc<StdMutex<Vec<&'static str>>>,
@@ -112,6 +113,13 @@ impl ServerHandler for TestBackend {
         request: CallToolRequestParams,
         cx: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        if let Some(parts) = cx.extensions.get::<Parts>() {
+            self.state
+                .request_headers
+                .lock()
+                .expect("backend request headers lock poisoned")
+                .push(parts.headers.clone());
+        }
         self.state
             .calls
             .lock()
