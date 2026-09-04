@@ -1,25 +1,9 @@
 use axum::{extract::Request, response::Response};
 
-use contextforge_data_plane_apis::User;
 use futures::future::BoxFuture;
 use tracing::debug;
-use typed_builder::TypedBuilder;
 
 use crate::{AuthorizationClaims, authorization::PrincipalExtractor, errors::unauthorized_response};
-
-#[derive(Debug, Clone, TypedBuilder)]
-#[allow(dead_code)]
-pub struct AuthorizedPrincipal {
-    user_id: String,
-    tenant_id: String,
-    scopes: Vec<String>,
-}
-
-impl<'a> From<&'a AuthorizedPrincipal> for User<'a> {
-    fn from(value: &'a AuthorizedPrincipal) -> Self {
-        Self::new(&value.user_id)
-    }
-}
 
 // pub async fn principal_extractor_layer(request: http::Request<axum::body::Body>, next: Next) -> Response {
 //     let maybe_claims = request.extensions().get::<AuthorizationClaims>();

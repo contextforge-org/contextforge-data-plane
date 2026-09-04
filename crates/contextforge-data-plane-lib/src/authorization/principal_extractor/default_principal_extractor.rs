@@ -1,14 +1,7 @@
-use crate::layers::AuthorizedPrincipal;
+use crate::authorization::{AuthorizedPrincipal, PrincipalExtractor};
 
 #[derive(Debug, Clone)]
 pub struct DefaultPrincipalExtractor {}
-
-pub trait PrincipalExtractor {
-    fn extract(
-        &self,
-        claims: &serde_json::Value,
-    ) -> Result<AuthorizedPrincipal, Box<dyn std::error::Error + Send + Sync>>;
-}
 
 impl PrincipalExtractor for DefaultPrincipalExtractor {
     fn extract(

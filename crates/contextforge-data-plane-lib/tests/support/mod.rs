@@ -76,6 +76,7 @@ pub fn create_default_config() -> Config {
         log_rotation: None,
         mcp_allowed_origins: None,
         mcp_allowed_hosts: None,
+        cel_principal_extractor_path: PathBuf::from_str("./assets/principal_extractor.cel").expect("This should work"),
 
         #[cfg(feature = "with_tools")]
         token_verification_private_key: PathBuf::from_str("./assets/jwt.key").expect("This should work"),

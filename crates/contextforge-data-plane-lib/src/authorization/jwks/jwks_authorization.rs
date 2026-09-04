@@ -55,7 +55,6 @@ impl AuthorizationService for JwtAuthorizationService {
         let token = str::from_utf8(token).ok()?;
         let claims = self.authorize_token(token).await;
 
-        println!("got claims {claims:?}");
         if claims.is_none() {
             tracing::debug!("validate_saas_jwt  SaaS JWT was rejected");
         }

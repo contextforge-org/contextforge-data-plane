@@ -87,7 +87,6 @@ impl Jwks {
         key: &DecodingKey,
         validation: &Validation,
     ) -> Option<AuthorizationClaims> {
-        println!("Validation {validation:?}");
         let claims = decode::<Value>(token, key, validation)
             .inspect_err(|e| {
                 debug!("validate_and_decode_claims: problem {e:?}");

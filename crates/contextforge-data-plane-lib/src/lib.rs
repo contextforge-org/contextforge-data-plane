@@ -40,7 +40,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type Result<T> = std::result::Result<T, Error>;
 
 use crate::{
-    authorization::DefaultPrincipalExtractor,
+    authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor},
     layers::{
         claims_id::claims_layer,
         mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
@@ -141,13 +141,16 @@ impl Gateway {
         };
         let mcp_standard_header_limits = StandardHeaderLimits::from(&config);
 
-        let principal_extractor_layer = layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor {});
+        let cel_principal_extractor_layer = layers::PrincipalExtractorLayer::new(CelPrincipalExtractor::from_file(
+            config.cel_principal_extractor_path.clone(),
+        )?);
+        let default_principal_extractor_layer = layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor {});
 
         let app = axum::Router::new()
             .nest_service("/servers/{virtual_host_name}/mcp", mcp_service)
             .layer(middleware::from_fn(virtual_host_config_layer))
             .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer))
-            .layer(principal_extractor_layer)
+            .layer(cel_principal_extractor_layer)
             .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), claims_layer))
             .layer(middleware::from_fn(virtual_host_id_layer))
             // Keep this outside auth/config/RMCP work so oversized MCP headers

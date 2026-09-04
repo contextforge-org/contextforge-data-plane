@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 use thiserror::Error;
 use tracing::debug;
 
-use crate::{AuthorizationClaims, authorization::jwks::principal::PrincipalExtractor, layers::AuthorizedPrincipal};
+use crate::authorization::{AuthorizedPrincipal, PrincipalExtractor};
 
 #[derive(Error, Debug)]
 pub enum CelPrincipalExtractorError {
@@ -73,10 +73,10 @@ impl CelPrincipalExtractor {
 }
 
 impl PrincipalExtractor for CelPrincipalExtractor {
-    fn extract<'a>(
+    fn extract(
         &self,
-        claims: &'a serde_json::Map<String, JsonValue>,
-    ) -> Result<Option<AuthorizedPrincipal>, Box<dyn std::error::Error + Send + Sync>> {
+        claims: &serde_json::Value,
+    ) -> Result<AuthorizedPrincipal, Box<dyn std::error::Error + Send + Sync>> {
         let mut context = Context::default();
 
         context
@@ -89,7 +89,7 @@ impl PrincipalExtractor for CelPrincipalExtractor {
 
         debug!("CEL expression evaluated to: {:?}", result);
 
-        Ok(Some(AuthorizedPrincipal::try_from(result)?))
+        Ok(AuthorizedPrincipal::try_from(result)?)
     }
 }
 
