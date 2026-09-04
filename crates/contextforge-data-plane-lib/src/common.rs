@@ -269,6 +269,9 @@ pub struct Config {
     #[cfg(feature = "with_tools")]
     #[arg(long)]
     pub token_verification_private_key: PathBuf,
+
+    #[arg(long)]
+    pub cel_principal_extractor_path: PathBuf,
 }
 
 pub const DEFAULT_MCP_STANDARD_HEADER_MAX_COUNT: usize = 32;
@@ -460,6 +463,8 @@ mod tests {
                 log_rotation: None,
                 mcp_allowed_origins: None,
                 mcp_allowed_hosts: None,
+                cel_principal_extractor_path: PathBuf::from_str("./assets/principal_extractor.cel")
+                    .expect("This should work"),
 
                 #[cfg(feature = "with_tools")]
                 token_verification_private_key: PathBuf::from_str("./assets/jwt.key").expect("This should work"),

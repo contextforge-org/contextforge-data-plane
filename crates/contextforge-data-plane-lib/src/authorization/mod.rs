@@ -11,7 +11,9 @@ use crate::Config;
 mod jwks;
 mod principal_extractor;
 
-pub use principal_extractor::{DefaultPrincipalExtractor, PrincipalExtractor};
+pub use principal_extractor::{
+    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, PrincipalExtractor,
+};
 
 pub fn get_authorization_service(
     config: &Config,
