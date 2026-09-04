@@ -1,0 +1,5 @@
+{
+ "user_id": claims.sub,
+ "tenant_id": claims.tenant_id,
+ "scopes": []
+}
