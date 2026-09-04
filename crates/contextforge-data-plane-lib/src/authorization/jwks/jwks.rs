@@ -13,10 +13,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 use typed_builder::TypedBuilder;
 
-use crate::authorization::{
-    AuthorizationClaims, AuthorizationError,
-    jwks::principal::{DefaultPrincipalExtractor, PrincipalExtractor},
-};
+use crate::authorization::{AuthorizationClaims, AuthorizationError};
 
 pub const JWKS_CACHE_TTL: Duration = Duration::from_mins(5);
 pub const JWKS_CACHE_KEY: &str = "jwks";
@@ -24,10 +21,7 @@ pub const JWKS_CACHE_KEY: &str = "jwks";
 const JWKS_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(TypedBuilder)]
-pub(super) struct Jwks<T>
-where
-    T: PrincipalExtractor,
-{
+pub(super) struct Jwks {
     client: reqwest::Client,
     url: Url,
     #[builder(default = RwLock::new(LruCache::with_expiry_duration(JWKS_CACHE_TTL)))]
@@ -38,10 +32,9 @@ where
     validate_expiry: bool,
     #[builder(default = true)]
     validate_not_before: bool,
-    principal_extractor: T,
 }
 
-impl Jwks<DefaultPrincipalExtractor> {
+impl Jwks {
     fn validation(&self, alg: Algorithm) -> Validation {
         let mut validation = Validation::new(alg);
         validation.required_spec_claims.clear();
@@ -54,17 +47,18 @@ impl Jwks<DefaultPrincipalExtractor> {
     pub async fn validate(&self, token: &str, header: &Header) -> Option<AuthorizationClaims> {
         {
             let cache = self.cache.read().await;
+
             if let Some(keys) = cache.peek(JWKS_CACHE_KEY)
                 && keys.iter().any(|key| key.matches(header))
             {
-                return self.validate_with_keys(keys, token, header, &self.validation(header.alg));
+                return Self::validate_with_keys(keys, token, header, &self.validation(header.alg));
             }
         }
 
         match fetch_jwks(&self.client, &self.url).await {
             Ok(keys) => {
                 let key_count = keys.len();
-                let claims = self.validate_with_keys(&keys, token, header, &self.validation(header.alg));
+                let claims = Self::validate_with_keys(&keys, token, header, &self.validation(header.alg));
                 self.cache.write().await.insert(JWKS_CACHE_KEY.to_owned(), keys);
                 tracing::info!("validate: SaaS JWKS cache refreshed {key_count}");
 
@@ -78,7 +72,6 @@ impl Jwks<DefaultPrincipalExtractor> {
     }
 
     fn validate_with_keys(
-        &self,
         keys: &[VerificationKey],
         token: &str,
         header: &Header,
@@ -86,26 +79,23 @@ impl Jwks<DefaultPrincipalExtractor> {
     ) -> Option<AuthorizationClaims> {
         keys.iter()
             .filter(|key| key.matches(header))
-            .find_map(|key| self.validate_and_decode_claims(token, &key.decoding_key, validation))
+            .find_map(|key| Self::validate_and_decode_claims(token, &key.decoding_key, validation))
     }
 
     fn validate_and_decode_claims(
-        &self,
         token: &str,
         key: &DecodingKey,
         validation: &Validation,
     ) -> Option<AuthorizationClaims> {
+        println!("Validation {validation:?}");
         let claims = decode::<Value>(token, key, validation)
             .inspect_err(|e| {
                 debug!("validate_and_decode_claims: problem {e:?}");
             })
             .ok()?
             .claims;
-        let claims = claims.as_object()?;
-        let user_id = self.principal_extractor.user_id(claims)?;
-        let tenant_id = self.principal_extractor.tenant_id(claims)?;
 
-        Some(AuthorizationClaims::new(user_id, tenant_id))
+        Some(AuthorizationClaims::from(claims))
     }
 }
 
