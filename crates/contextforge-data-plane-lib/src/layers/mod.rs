@@ -7,3 +7,4 @@ pub mod virtual_host_config;
 pub mod virtual_host_id;
 
 pub(crate) use principal_extractor::AuthorizedPrincipal;
+pub use principal_extractor::PrincipalExtractorLayer;
