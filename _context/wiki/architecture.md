@@ -105,7 +105,11 @@ Order is invariant: auth/config before backend selection; request plugins before
 | `gateway/session_store/` | Local and Redis user session storage |
 | `user_config_store/` | `UserConfigStore` trait, Redis-backed store |
 | `transports/` | Downstream TCP and TLS listener setup |
-| `tools.rs` | Local bootstrap helpers (`with_tools` feature only) |
+| `tools.rs` | Testing-only token, JWKS, and config helpers (`with_tools` feature) |
+
+`Gateway::into_router` registers `/contextforge-rs/health` in every build,
+outside the MCP authentication and config layers. Health remains covered by the
+outer HTTP tracing and metrics layers.
 
 ## State Ownership
 

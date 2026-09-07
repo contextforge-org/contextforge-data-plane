@@ -81,7 +81,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
-      - name: Build the workspace
+      - name: Build the workspace for conformance testing (includes with_tools)
         run: cargo build --locked --workspace --all-features
 
       - name: Strip the conformance binary

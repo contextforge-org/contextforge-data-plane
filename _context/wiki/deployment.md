@@ -12,13 +12,34 @@
 3. Redis reachable; TLS/mTLS across trust zones; write access restricted to the control plane; `DATAPLANE_PUBLISHER=true` on the control plane.
 4. Upstream connection mode matches backend URL schemes.
 5. One replica per `Mcp-session-id` (single replica or sticky routing).
-6. `with_tools` feature **disabled** in the production build.
+6. `with_tools` feature **disabled** in the production build; it is for testing only.
 7. Telemetry export pointed at the collector.
 8. System limits raised: `nofile 65535`, TCP tuning (`tcp_fin_timeout=15`, widened local port range).
 
 ## Health Endpoint
 
-**`/contextforge-rs/health` is a `with_tools` bootstrap helper only.** Production builds compile it out. Use TCP-level liveness checks or the exported metrics until a real health endpoint exists.
+`GET /contextforge-rs/health` is available in every build, including production
+builds without `with_tools`. It returns HTTP `200` with
+`{"status": "healthy"}` and does not require authentication. The reference nginx
+configuration also exposes it at `/health`.
+
+Use it for HTTP liveness checks. It reports that the HTTP server is responding;
+it does not check Redis, JWKS availability, or backend readiness.
+
+## Production Builds
+
+```bash
+make docker-prod
+# Equivalent native build:
+cargo build --locked --release -p contextforge-data-plane --features plugins
+```
+
+`make docker-prod`, direct builds of `docker/Dockerfile`, and the image publishing
+workflow all compile the production plugin factories without `with_tools`.
+Do not use `--all-features` for production artifacts: it also enables testing
+helpers and demo plugins. Configure `--jwks-url` (or
+`CONTEXTFORGE_DATA_PLANE_JWKS_URL`) with the HTTPS JWKS endpoint for the token
+issuer; the dataplane does not need a token-signing private key.
 
 ## nginx Front-Door Routing
 
@@ -72,7 +93,8 @@ Both default to ~60s. For functional tests, shorten the publisher interval and d
 | --- | --- |
 | JWT revocation | None. A leaked token is valid until `exp`. Rotate the key and restart to invalidate. |
 | CORS / Origin | CORS response headers are permissive. `mcp_origin_layer` validates Origin before authentication, and RMCP validates Host at the MCP service boundary. Configure both `--mcp-allowed-hosts` and `--mcp-allowed-origins` for production. |
-| Local bootstrap routes | `/contextforge-rs/admin/tokens/{user}`, `/admin/userconfigs/{user}`, `/health` are **outside auth middleware — unauthenticated by design.** Only exist with `with_tools`. Production builds must not enable `with_tools`. |
+| Testing helpers | The token, JWKS, and user-config routes under `/contextforge-rs/admin/` are unauthenticated and exist only with `with_tools`. The feature is for testing only and must never be enabled in production. |
+| Health | `/contextforge-rs/health` is unauthenticated and available in every build. It checks HTTP liveness only. |
 | Redis trust | Whoever can write Redis controls routing (arbitrary backend URLs receive caller traffic) AND which registered plugin hooks execute on payloads. Protect with TLS/mTLS and restrict write access to the control plane. |
 | Downstream TLS | Optional. Plain HTTP is acceptable only behind a trusted front door on a private network. Identity is always the bearer JWT, not mTLS. |
 | Plugin code | Fully trusted, in-process. Redis config activates compiled-in factories only — it cannot inject new Rust code. |

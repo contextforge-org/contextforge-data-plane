@@ -20,6 +20,15 @@ cargo shear --check-test-targets --deny-warnings --locked
 
 Use `cargo test` when nextest is unavailable. For wiki changes, also run `mdbook build _context/wiki` and `mdbook test _context/wiki`.
 
+`with_tools` is for testing only. It provides unauthenticated token, JWKS, and
+user-config helpers for local fixtures. The all-features test commands, local
+conformance image, and CI conformance artifact deliberately include it;
+production builds must omit it and must not use `--all-features`.
+`/contextforge-rs/health` is available without
+this feature. See [Deployment](deployment.md#production-builds) for production
+build commands and [Getting Started](getting-started.md#local-cargo-dev-workflow)
+for local testing.
+
 New protocol-sensitive tests target MCP `2026-07-28`, connect through
 `server/discover`, and send the required per-request client metadata. A small
 `compatibility` module retains the active `2025-11-25`/`initialize` cases until
@@ -90,9 +99,14 @@ cargo binstall cf-integration@0.3.1 --no-confirm
 make conformance
 ```
 
-The Make target tests the committed data-plane `HEAD`. It rejects tracked
-uncommitted changes because the CLI clones the selected repository and commit
-into `.integration/`. To use another local CLI binary:
+The Make target tests the committed data-plane `HEAD` and rejects tracked
+uncommitted changes. Its `conformance-image` prerequisite builds a Git archive of
+`CF_DATAPLANE_REF` from `CF_DATAPLANE_REPO` with
+`--build-arg CARGO_FEATURES=plugins,with_tools`. It passes the resulting local
+image to the harness with pulling and source rebuilds disabled. The default tag
+is `contextforge-data-plane:conformance`, separate from the production image.
+CI supplies its prebuilt test image with `CF_DATAPLANE_REF` empty, which skips
+the local image build. To use another local CLI binary:
 
 ```bash
 CF_INTEGRATION=/path/to/cf-integration \

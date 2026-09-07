@@ -6,7 +6,7 @@
 --redis-address   --redis-port   --redis-mode
 ```
 
-Plus at least: `--address` or `--tls-address`, `--token-verification-public-key` or `--token-verification-secret`.
+Plus `--jwks-url` and at least one listener: `--address` or `--tls-address`.
 
 ## Complete CLI and Environment Reference
 
@@ -30,9 +30,9 @@ Origin and Host settings retain the explicitly configured
 | `--tls-address <host:port>` | `CONTEXTFORGE_DATA_PLANE_TLS_ADDRESS` | Optional | TLS listener; requires server certificate and key. |
 | `--server-certificate <path>` | `CONTEXTFORGE_DATA_PLANE_TLS_SERVER_CERTIFICATE` | With `--tls-address` | PEM certificate chain for downstream TLS. |
 | `--server-private-key <path>` | `CONTEXTFORGE_DATA_PLANE_TLS_SERVER_PRIVATE_KEY` | With `--tls-address` | PEM private key for downstream TLS. |
-| `--token-verification-public-key <path>` | `CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PUBLIC_KEY` | For RSA tokens | Verifies `RS256`, `RS384`, and `RS512` tokens. |
-| `--token-verification-secret <secret>` | `CONTEXTFORGE_DATA_PLANE_TOKEN_SECRET` | For HMAC tokens | Verifies `HS256`, `HS384`, and `HS512` tokens. |
-| `--token-verification-private-key <path>` | `CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PRIVATE_KEY` | Required when built with `with_tools` | Signs tokens for the optional local bootstrap helper. |
+| `--jwks-url <url>` | `CONTEXTFORGE_DATA_PLANE_JWKS_URL` | Required | Token issuer's HTTPS JWKS endpoint; HTTP is allowed only on loopback for testing. |
+| `--jwks-ca-cert-path <path>` | `CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH` | Optional | PEM trust bundle for the JWKS endpoint. |
+| `--token-verification-private-key <path>` | None (CLI only) | Required when built with `with_tools` | Signs tokens for testing-only bootstrap helpers. Never use this feature in production. |
 
 ### MCP request validation
 
@@ -250,17 +250,18 @@ docker compose -f docker/docker-compose-local.yaml exec -T redis \
   }'
 ```
 
-Build and run with demo factories and runtime execution enabled:
+For local testing only, build and run with demo factories, testing-only
+`with_tools` helpers, and runtime execution enabled:
 
 ```bash
 cargo run -p contextforge-data-plane \
-  --features 'contextforge-data-plane-lib/with_tools,test-plugins' \
+  --features 'with_tools,test-plugins' \
   --bin contextforge-data-plane -- \
   --address 127.0.0.1:8001 \
   --redis-address 127.0.0.1 \
   --redis-port 6379 \
   --redis-mode plain-text \
-  --token-verification-public-key assets/jwt.key.pub \
+  --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true
@@ -387,13 +388,15 @@ docker compose \
   up -d
 ```
 
-Run the gateway with export enabled (RUST_TRACE_LOG=debug required for trace export):
+Run the gateway with export enabled (RUST_TRACE_LOG=debug required for trace
+export). Set `CONTEXTFORGE_DATA_PLANE_JWKS_URL` to your token issuer's HTTPS JWKS
+endpoint; this command does not enable testing helpers.
 ```bash
 RUST_TRACE_LOG=debug \
 cargo run --release --bin contextforge-data-plane -- \
   --address 0.0.0.0:8001 \
   --redis-port 6379 --redis-address 127.0.0.1 --redis-mode=plain-text \
-  --token-verification-public-key assets/jwt.key.pub \
+  --jwks-url "$CONTEXTFORGE_DATA_PLANE_JWKS_URL" \
   --number-of-cpus 4 \
   --upstream-connection-mode=plain-text-or-tls \
   --enable-open-telemetry true \

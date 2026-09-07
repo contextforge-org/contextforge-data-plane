@@ -74,8 +74,8 @@ services:
       - CONTEXTFORGE_DATA_PLANE_REDIS_PORT=6379
       - CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE=plain-text
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
-      - CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PUBLIC_KEY=/keys/jwt.key.pub
-      - CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PRIVATE_KEY=/keys/jwt.key
+      # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
+      - CONTEXTFORGE_DATA_PLANE_JWKS_URL
       - RUST_LOG=debug
 
     sysctls:
@@ -93,7 +93,7 @@ services:
         condition: service_healthy
 
     healthcheck:
-      ## Uncomment for HTTP healthcheck
+      # Health is available in production builds without with_tools.
       test:
         [
           "CMD",
@@ -122,13 +122,6 @@ services:
           cpus: '${GATEWAY_CPU_RESERVATION:-1}'
           memory: ${GATEWAY_MEM_RESERVATION:-512M}
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Volume Mounts
-    # ──────────────────────────────────────────────────────────────────────
-    # Mount catalog configuration and SSL certificates
-    volumes:
-      - ../assets/:/keys:z # mount catalog configuration
-
   contextforge-data-plane-one:
     image: ${IMAGE_LOCAL:-contextforge-data-plane:latest}
     container_name: contextforge-data-plane-one
@@ -141,8 +134,8 @@ services:
       - CONTEXTFORGE_DATA_PLANE_REDIS_PORT=6379
       - CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE=plain-text
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
-      - CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PUBLIC_KEY=/keys/jwt.key.pub
-      - CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PRIVATE_KEY=/keys/jwt.key
+      # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
+      - CONTEXTFORGE_DATA_PLANE_JWKS_URL
       - RUST_LOG=debug
 
     sysctls:
@@ -165,13 +158,6 @@ services:
         reservations:
           cpus: '${GATEWAY_CPU_RESERVATION:-1}'
           memory: ${GATEWAY_MEM_RESERVATION:-512M}
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Volume Mounts
-    # ──────────────────────────────────────────────────────────────────────
-    # Mount catalog configuration and SSL certificates
-    volumes:
-      - ../assets/:/keys:z # mount catalog configuration
 
   contextforge-data-plane-two:
     image: ${IMAGE_LOCAL:-contextforge-data-plane:latest}
@@ -185,8 +171,8 @@ services:
       - CONTEXTFORGE_DATA_PLANE_REDIS_PORT=6379
       - CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE=plain-text
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
-      - CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PUBLIC_KEY=/keys/jwt.key.pub
-      - CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PRIVATE_KEY=/keys/jwt.key
+      # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
+      - CONTEXTFORGE_DATA_PLANE_JWKS_URL
       - RUST_LOG=debug
 
     sysctls:
@@ -209,13 +195,6 @@ services:
         reservations:
           cpus: '${GATEWAY_CPU_RESERVATION:-1}'
           memory: ${GATEWAY_MEM_RESERVATION:-512M}
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Volume Mounts
-    # ──────────────────────────────────────────────────────────────────────
-    # Mount catalog configuration and SSL certificates
-    volumes:
-      - ../assets/:/keys:z # mount catalog configuration
 
   mcp-counter-tool-one:
     image: ghcr.io/mcp-counter-tool:latest

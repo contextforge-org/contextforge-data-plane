@@ -3,9 +3,15 @@
 ## Full Docker Stack
 
 ```bash
-make docker-prod    # build contextforge-data-plane:latest from docker/Dockerfile
+export CONTEXTFORGE_DATA_PLANE_JWKS_URL=https://your-issuer.example/.well-known/jwks.json
+make docker-prod    # production plugins and health endpoint; no testing helpers
 make compose-up    # start nginx, Python control/built-in components, Redis, Postgres, external dataplane, fast_time_server
 ```
+
+Replace the example JWKS URL with the HTTPS endpoint serving the signing keys
+for the tokens issued by your control plane. Compose passes it to the dataplane
+through `CONTEXTFORGE_DATA_PLANE_JWKS_URL`. Production images do not contain the
+testing-only `with_tools` helpers or need token-signing private keys.
 
 Wait for `register_fast_time` to finish, then allow ~60s config propagation:
 
@@ -17,7 +23,8 @@ docker compose -f docker/docker-compose.yml logs -f register_fast_time
 | Resource | URL |
 | --- | --- |
 | MCP endpoint | `http://localhost:8080/contextforge-rs/servers/{virtual_host_id}/mcp` |
-| Bearer token | `GET http://localhost:8080/contextforge-rs/admin/tokens/admin@example.com` |
+| Bearer token | Issue through the control plane; the production dataplane has no token helper. |
+| Health | `http://localhost:8080/health` (also `/contextforge-rs/health`) |
 | fast_time_server virtual host id | `b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8` |
 
 > **Critical**: `/contextforge-rs` prefix → ContextForge external dataplane.
@@ -35,8 +42,9 @@ make conformance
 
 This runs the modern client and modern server eras through the committed
 external-dataplane `HEAD`, including fixture-direct server comparison and the
-scoped client suite. Use `make conformance-bless` to replace all selected
-baselines transactionally after a fully successful run. Generated checkouts,
+scoped client suite. It builds a separate testing-only image with `with_tools`
+for the harness's bootstrap JWKS endpoint. Use `make conformance-bless` to
+replace all selected baselines transactionally after a fully successful run. Generated checkouts,
 results, reports, and logs stay under `.integration/`.
 
 ## Local Cargo Dev Workflow
@@ -54,17 +62,19 @@ docker compose -f docker/docker-compose-local.yaml ps redis gateway-one gateway-
 | `gateway-one` | `http://127.0.0.1:5555/mcp` | MCP Rust SDK counter fixture. |
 | `gateway-two` | `http://127.0.0.1:5556/mcp` | MCP Rust SDK conformance fixture. |
 
-Run the binary with bootstrap helpers:
+Run the binary with bootstrap helpers **for local testing only**. `with_tools`
+enables unauthenticated token, JWKS, and config routes. It must never be enabled
+in production, and it is not needed for `/contextforge-rs/health`.
 
 ```bash
 cargo run -p contextforge-data-plane \
-  --features contextforge-data-plane-lib/with_tools \
+  --features with_tools \
   --bin contextforge-data-plane -- \
   --address 127.0.0.1:8001 \
   --redis-address 127.0.0.1 \
   --redis-port 6379 \
   --redis-mode plain-text \
-  --token-verification-public-key assets/jwt.key.pub \
+  --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --number-of-cpus 4
@@ -76,8 +86,9 @@ The client-facing route is `http://127.0.0.1:8001/contextforge-rs/servers/{virtu
 
 ```bash
 USER_ID=11111111-1111-1111-1111-111111111111
+TENANT_ID=team_awesome
 TOKEN=$(curl --silent --show-error \
-  --url "http://127.0.0.1:8001/contextforge-rs/admin/tokens/${USER_ID}?email=admin@example.com")
+  --url "http://127.0.0.1:8001/contextforge-rs/admin/tokens/${TENANT_ID}/${USER_ID}?email=admin@example.com")
 ```
 
 ### Seed runtime configuration

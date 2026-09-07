@@ -108,14 +108,23 @@ unchanged, while RMCP regenerates method, routed-name, and protocol-version
 headers. If a plugin later changes an annotated argument, the original header
 remains and the upstream server may reject the mismatch.
 
-## Local Bootstrap Helpers (`with_tools`)
+## Testing-Only Bootstrap Helpers (`with_tools`)
 
-The `contextforge-data-plane-lib/with_tools` feature compiles in:
-- `/contextforge-rs/admin/tokens/{user}`
-- `/contextforge-rs/admin/userconfigs/{user}`
-- `/contextforge-rs/health`
+The `with_tools` feature is **for testing only**. It compiles in these
+unauthenticated helpers:
 
-These routes are registered **outside the authentication middleware** — unauthenticated by design. They exist only for local bootstrap. **Production builds must not enable this feature.** In a real deployment the control plane mints tokens and writes config.
+- `GET` and `POST /contextforge-rs/admin/tokens/{tenant_id}/{user_id}`
+- `GET /contextforge-rs/admin/.well-known/jwks.json`
+- `POST /contextforge-rs/admin/userconfigs/{user_id}`
+
+These routes are registered **outside the authentication middleware**.
+**Production builds must not enable this feature**, including indirectly through
+`--all-features`. Production token issuance and configuration publication belong
+to the control plane and identity provider.
+
+`/contextforge-rs/health` is separate from these helpers. It is unauthenticated
+and available in every build, including production. It reports HTTP liveness
+without accessing authentication, runtime configuration, or MCP backends.
 
 ## Secrets Handling
 

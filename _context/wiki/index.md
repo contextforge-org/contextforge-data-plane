@@ -16,7 +16,7 @@ then follow only the links that are relevant.
 | [mcp-capability-allocation.md](mcp-capability-allocation.md) | Tentative ContextForge 2.0 target topology, ownership, state model, Phase 1-4 roadmap, and Phase 3 flows |
 | [failure-modes.md](failure-modes.md) | HTTP/MCP/routing/backend/plugin failure table — exact HTTP codes and JSON-RPC errors |
 | [config.md](config.md) | Key CLI flags, JWT claims, UserConfig shape, plugin config, telemetry debugging, startup validation, local observability stack |
-| [deployment.md](deployment.md) | External-dataplane deployment checklist, health endpoint caveat, nginx routing, TLS choices, session affinity, Redis availability, image pinning |
+| [deployment.md](deployment.md) | External-dataplane production builds, health endpoint, deployment checklist, nginx routing, TLS choices, session affinity, Redis availability, image pinning |
 | [security.md](security.md) | Trust boundaries among the control plane, built-in dataplane, and external dataplane; Origin/Host validation; transport security; secrets handling |
 | [performance.md](performance.md) | Control-plane Locust load runs, benchmark settings, and built-in-dataplane baseline |
 | [testing.md](testing.md) | Workspace checks, in-repo integration tests, full-stack harness lanes, settings, and control-plane baseline |
