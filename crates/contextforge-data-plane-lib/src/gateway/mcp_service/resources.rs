@@ -5,7 +5,7 @@ use rmcp::{
     },
     service::RequestContext,
 };
-use tracing::info;
+use tracing::{Instrument, info, instrument};
 
 use super::McpService;
 use crate::gateway::{
@@ -13,6 +13,7 @@ use crate::gateway::{
     routing_error::backend_forward_error,
 };
 
+#[instrument(name = "read_resource", level = "info", skip_all)]
 pub(super) async fn read_resource(
     mcp_service: &McpService,
     request: ReadResourceRequestParams,
@@ -59,13 +60,13 @@ pub(super) async fn read_resource(
     let mut routed_request = request;
 
     routed_request.uri = resource_uri.clone();
-    let response = backend_service.read_resource(routed_request).await;
+    let response = backend_service.read_resource(routed_request).instrument(tracing::info_span!("read_resource")).await;
     if let Err(error) = backend_service.close().await {
         tracing::warn!("read_resource: backend cleanup failed backend_name = {backend_name} error = {error:?}");
     }
     let response = response.map_err(|error| backend_forward_error("read_resource", &backend_name, &error))?;
     let response = if let Some(resource_hook) = resource_hook {
-        resource_hook.after_read_resource(response).await?
+        resource_hook.after_read_resource(response).instrument(tracing::info_span!("after_read_resource")).await?
     } else {
         response
     };

@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
-use contextforge_data_plane_lib::{Config, LogRotation, OtlpProtocol};
+use contextforge_data_plane_lib::{Config, OtlpProtocol};
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::{MetricExporter, Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{RandomIdGenerator, Sampler};
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
-use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
     Layer, Registry, filter,
     fmt::{self, format::FmtSpan},
@@ -15,14 +14,8 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
-/// Holds RAII handles whose lifetime must match the process so background
-/// telemetry tasks keep running. The file appender's worker thread needs
-/// the [`WorkerGuard`] to stay alive to flush logs on shutdown, and the
-/// metrics [`SdkMeterProvider`] needs to stay alive so its
-/// [`PeriodicReader`] task keeps exporting at the configured interval.
 #[allow(dead_code)]
 pub struct Guard {
-    appender: WorkerGuard,
     meter_provider: Option<SdkMeterProvider>,
 }
 
@@ -33,24 +26,11 @@ const DEFAULT_HTTP_TRACES_ENDPOINT: &str = "http://127.0.0.1:4318/v1/traces";
 const DEFAULT_HTTP_METRICS_ENDPOINT: &str = "http://127.0.0.1:4318/v1/metrics";
 const METRICS_EXPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
-const DEFAULT_LOGGING: &str = "debug,hyper_util=OFF,tower_http=OFF,rmcp=warn,reqwest=warn,rustls=WARN";
+const DEFAULT_LOGGING: &str = "debug,hyper_util=OFF,tower_http=OFF,rmcp=warn,reqwest=warn,rustls=WARN,h2=WARN,opentelemetry_sdk=WARN,opentelemetry-otlp=WARN";
 
 pub fn init_tracing_logging(configuration: &Config) -> Result<Guard, Box<dyn std::error::Error + Send + Sync>> {
     let registry = Registry::default();
 
-    let log_name = configuration.log_name.clone().unwrap_or("contextforge-data-plane.log".to_owned());
-
-    let file_appender = match configuration.log_rotation.clone().unwrap_or_default() {
-        LogRotation::Minutely => tracing_appender::rolling::minutely(".", log_name),
-        LogRotation::Hourly => tracing_appender::rolling::hourly(".", log_name),
-        LogRotation::Daily => tracing_appender::rolling::daily(".", log_name),
-        LogRotation::Never => tracing_appender::rolling::never(".", log_name),
-    };
-
-    let (non_blocking_appender, guard) = tracing_appender::non_blocking(file_appender);
-    let file_filter = tracing_subscriber::EnvFilter::new(
-        std::env::var("RUST_FILE_LOG").unwrap_or_else(|_| DEFAULT_LOGGING.to_owned()),
-    );
     let console_filter =
         tracing_subscriber::EnvFilter::new(std::env::var("RUST_LOG").unwrap_or_else(|_| DEFAULT_LOGGING.to_owned()));
     let tracing_filter = tracing_subscriber::EnvFilter::new(
@@ -64,14 +44,6 @@ pub fn init_tracing_logging(configuration: &Config) -> Result<Guard, Box<dyn std
         .with_ansi(false)
         .with_filter(filter::filter_fn(|meta| !meta.is_span()))
         .with_filter(console_filter);
-
-    let file_layer = fmt::layer()
-        .with_writer(non_blocking_appender)
-        .with_target(true)
-        .with_span_events(FmtSpan::NONE)
-        .with_ansi(false)
-        .with_filter(filter::filter_fn(|meta| !meta.is_span()))
-        .with_filter(file_filter);
 
     if let Some(true) = configuration.enable_open_telemetry {
         let protocol = configuration.otlp_protocol.clone().unwrap_or_default();
@@ -128,12 +100,12 @@ pub fn init_tracing_logging(configuration: &Config) -> Result<Guard, Box<dyn std
 
         let meter_provider = init_meter_provider(configuration, &service_name)?;
 
-        registry.with(console_layer).with(file_layer).with(telemetry.with_filter(tracing_filter)).init();
+        registry.with(console_layer).with(telemetry.with_filter(tracing_filter)).init();
 
-        Ok(Guard { appender: guard, meter_provider })
+        Ok(Guard { meter_provider })
     } else {
-        registry.with(console_layer).with(file_layer).init();
-        Ok(Guard { appender: guard, meter_provider: None })
+        registry.with(console_layer).init();
+        Ok(Guard { meter_provider: None })
     }
 }
 

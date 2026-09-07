@@ -26,7 +26,7 @@ tracing-opentelemetry.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio.workspace = true
 opentelemetry.workspace = true
-opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "metrics"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "metrics","tls-aws-lc"] }
 opentelemetry_sdk.workspace = true
 tonic = "0.14"
 num_cpus = "1.17.0"
