@@ -49,6 +49,7 @@ async fn get_jwks(State(state): State<ContextForgeDataPlaneAppState>) -> Respons
 pub fn add_tools(router: Router<ContextForgeDataPlaneAppState>) -> Router<ContextForgeDataPlaneAppState> {
     router
         .route(TOKEN_PATH, get(get_token))
+        .route(TOKEN_PATH, post(get_custom_token))
         .route(JWKS_PATH, get(get_jwks))
         .route(CONFIGURE_USER_PATH, post(configure_user))
         .route("/health", get(health))
@@ -60,6 +61,30 @@ pub async fn health() -> Response {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from("{\"status\": \"healthy\"}"))
         .expect("Expecting this to work")
+}
+
+pub async fn get_custom_token(
+    State(state): State<ContextForgeDataPlaneAppState>,
+    Json(mut claims): Json<serde_json::Value>,
+) -> Response {
+    let key = jsonwebtoken::EncodingKey::from_rsa_pem(
+        &fs::read(&state.config.token_verification_private_key).expect("Expecting this to work"),
+    )
+    .expect("Expecting this to work");
+
+    let now =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Time went backwards").as_secs();
+
+    claims["exp"] = (now + Duration::from_hours(1).as_secs()).into();
+    claims["nbf"] = (now - Duration::from_mins(1).as_secs()).into();
+    claims["iat"] = (now).into();
+    claims["jti"] = Uuid::new_v4().to_string().into();
+
+    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+    header.kid = Some("test".to_owned());
+    let token = jsonwebtoken::encode::<serde_json::Value>(&header, &claims, &key).expect("Expecting this to work");
+
+    token.into_response()
 }
 
 pub async fn get_token(
