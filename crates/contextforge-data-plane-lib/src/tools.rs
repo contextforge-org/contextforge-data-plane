@@ -52,15 +52,6 @@ pub fn add_tools(router: Router<ContextForgeDataPlaneAppState>) -> Router<Contex
         .route(TOKEN_PATH, post(get_custom_token))
         .route(JWKS_PATH, get(get_jwks))
         .route(CONFIGURE_USER_PATH, post(configure_user))
-        .route("/health", get(health))
-}
-
-pub async fn health() -> Response {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from("{\"status\": \"healthy\"}"))
-        .expect("Expecting this to work")
 }
 
 pub async fn get_custom_token(

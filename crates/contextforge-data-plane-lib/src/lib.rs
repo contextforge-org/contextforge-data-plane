@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use axum::middleware;
+use axum::{body::Body, middleware, response::Response, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
 use contextforge_data_plane_cpex::GatewayPluginRuntimeHandle;
 use futures::FutureExt;
-use http::uri::Authority;
+use http::{StatusCode, header, uri::Authority};
 
 use rmcp::transport::{
     StreamableHttpServerConfig,
@@ -167,6 +167,7 @@ impl Gateway {
 
         #[cfg(feature = "with_tools")]
         let app = tools::add_tools(app);
+        let app = app.route("/health", get(health));
 
         let app = app.with_state(mcp_gateway_state);
         let app = axum::Router::new()
@@ -182,6 +183,14 @@ pub async fn get_config_store(config: &Config) -> Result<RedisUserConfigStore> {
     let redis_config = RedisConfig::try_from(config)?;
     let cache_expiry = std::time::Duration::from_secs(config.user_config_cache_expiry_seconds);
     RedisUserConfigStore::new(&RedisClient::try_from(redis_config)?, cache_expiry).await
+}
+
+async fn health() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{\"status\": \"healthy\"}"))
+        .expect("Expecting this to work")
 }
 
 #[cfg(test)]
