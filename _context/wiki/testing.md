@@ -21,9 +21,9 @@ cargo shear --check-test-targets --deny-warnings --locked
 Use `cargo test` when nextest is unavailable. For wiki changes, also run `mdbook build _context/wiki` and `mdbook test _context/wiki`.
 
 `with_tools` is for testing only. It provides unauthenticated token, JWKS, and
-user-config helpers for local fixtures. The all-features test commands, local
-conformance image, and CI conformance artifact deliberately include it;
-production builds must omit it and must not use `--all-features`.
+user-config helpers for local fixtures. The all-features unit test commands
+include it. Production builds and conformance images omit it and must not use
+`--all-features`. The harness owns conformance authentication and Redis setup.
 `/contextforge-rs/health` is available without
 this feature. See [Deployment](deployment.md#production-builds) for production
 build commands and [Getting Started](getting-started.md#local-cargo-dev-workflow)
@@ -90,23 +90,23 @@ so changes to `main` do not invalidate the artifact. It runs the modern client
 and modern server eras through the external dataplane in standalone mode. This
 starts Redis, the dataplane, nginx, and the official fixture without the control
 plane. The harness discovers the fixture's tools, resources, templates, and
-prompts and publishes their routes and actual tool schemas through the
-dataplane serializer. Selecting that lane also runs the fixture-direct server
-leg and the scoped external-dataplane client leg:
+prompts and publishes their routes and actual tool schemas directly to Redis
+as named MessagePack maps. Its own auth service signs test JWTs and serves
+loopback JWKS; the production dataplane receives no signing key. Selecting that
+lane also runs the fixture-direct server leg and the scoped external-dataplane
+client leg:
 
 ```bash
-cargo binstall cf-integration@0.3.1 --no-confirm
+cargo binstall cf-integration@0.3.2 --no-confirm
 make conformance
 ```
 
 The Make target tests the committed data-plane `HEAD` and rejects tracked
-uncommitted changes. Its `conformance-image` prerequisite builds a Git archive of
-`CF_DATAPLANE_REF` from `CF_DATAPLANE_REPO` with
-`--build-arg CARGO_FEATURES=plugins,with_tools`. It passes the resulting local
-image to the harness with pulling and source rebuilds disabled. The default tag
-is `contextforge-data-plane:conformance`, separate from the production image.
-CI supplies its prebuilt test image with `CF_DATAPLANE_REF` empty, which skips
-the local image build. To use another local CLI binary:
+uncommitted changes. The harness builds `CF_DATAPLANE_REF` from
+`CF_DATAPLANE_REPO` using the production Dockerfile with `plugins` and without
+`with_tools`. CI supplies a prebuilt production binary in its conformance image
+and sets `CF_DATAPLANE_REF` empty to skip the source build. To use another local
+CLI binary:
 
 ```bash
 CF_INTEGRATION=/path/to/cf-integration \

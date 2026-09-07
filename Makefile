@@ -5,14 +5,13 @@ CF_INTEGRATION ?= cf-integration
 CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
 CF_DATAPLANE_REPO ?= $(CURDIR)
 CF_DATAPLANE_REF ?= $(shell git -C "$(CF_DATAPLANE_REPO)" rev-parse HEAD)
-CF_DATAPLANE_IMAGE ?= contextforge-data-plane:conformance
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
 
 # IBM detect-secrets hardened fork — pinned to the same commit used in mcp-context-forge.
 DETECT_SECRETS_SPEC ?= git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976
 DETECT_SECRETS_EXCLUDE := '(?x)(Cargo\.lock$$|\.lock$$)|^\.secrets\.baseline$$'
 
-.PHONY: help docker-prod compose-up compose-down conformance-image conformance conformance-bless docs-serve pre-commit secrets-scan-all configure-git
+.PHONY: help docker-prod compose-up compose-down conformance conformance-bless docs-serve pre-commit secrets-scan-all configure-git
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
@@ -30,7 +29,7 @@ compose-up: ## Launch stack: nginx, control plane, redis, postgres, pgbouncer, d
 compose-down: ## Tear down the stack
 	docker compose -f docker/docker-compose.yml stop $(SERVICES) $(ARGS)
 
-conformance-image: ## Prepare a testing-only conformance image from the committed data-plane ref
+conformance: ## Run strict modern MCP conformance against the committed data-plane HEAD
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
 		exit 1; \
@@ -39,19 +38,9 @@ conformance-image: ## Prepare a testing-only conformance image from the committe
 		echo "Tracked data-plane changes are not committed; commit or stash them before conformance."; \
 		exit 1; \
 	fi
-	@if [ -n "$(CF_DATAPLANE_REF)" ]; then \
-		git -C "$(CF_DATAPLANE_REPO)" archive "$(CF_DATAPLANE_REF)" | \
-			docker build -t "$(CF_DATAPLANE_IMAGE)" -f docker/Dockerfile \
-				--label org.opencontainers.image.revision="$$(git -C "$(CF_DATAPLANE_REPO)" rev-parse "$(CF_DATAPLANE_REF)")" \
-				--build-arg CARGO_FEATURES=plugins,with_tools -; \
-	fi
-
-conformance: conformance-image ## Run strict modern MCP conformance against the committed data-plane HEAD
 	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
 	CF_DATAPLANE_REPO="$(CF_DATAPLANE_REPO)" \
-	CF_DATAPLANE_REF="" \
-	CF_DATAPLANE_IMAGE="$(CF_DATAPLANE_IMAGE)" \
-	CF_DATAPLANE_PULL_POLICY=never \
+	CF_DATAPLANE_REF="$(CF_DATAPLANE_REF)" \
 	"$(CF_INTEGRATION)" conformance run \
 		--client-era modern \
 		--server-era modern \
@@ -60,12 +49,18 @@ conformance: conformance-image ## Run strict modern MCP conformance against the 
 		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
 		--output-dir "$(CF_INTEGRATION_DIR)/reports"
 
-conformance-bless: conformance-image ## Run strict modern conformance and atomically update its baselines
+conformance-bless: ## Run strict modern conformance and atomically update its baselines
+	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git -C "$(CF_DATAPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
+		echo "Tracked data-plane changes are not committed; commit or stash them before conformance."; \
+		exit 1; \
+	fi
 	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
 	CF_DATAPLANE_REPO="$(CF_DATAPLANE_REPO)" \
-	CF_DATAPLANE_REF="" \
-	CF_DATAPLANE_IMAGE="$(CF_DATAPLANE_IMAGE)" \
-	CF_DATAPLANE_PULL_POLICY=never \
+	CF_DATAPLANE_REF="$(CF_DATAPLANE_REF)" \
 	"$(CF_INTEGRATION)" conformance run \
 		--client-era modern \
 		--server-era modern \

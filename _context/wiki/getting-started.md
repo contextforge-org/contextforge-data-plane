@@ -36,14 +36,15 @@ Teardown: `make compose-down` (stops containers; volumes kept).
 ## cf-integration Conformance
 
 ```bash
-cargo binstall cf-integration@0.1.0 --no-confirm
+cargo binstall cf-integration@0.3.2 --no-confirm
 make conformance
 ```
 
 This runs the modern client and modern server eras through the committed
 external-dataplane `HEAD`, including fixture-direct server comparison and the
-scoped client suite. It builds a separate testing-only image with `with_tools`
-for the harness's bootstrap JWKS endpoint. Use `make conformance-bless` to
+scoped client suite. It uses the production build without `with_tools`; the
+harness owns test JWT signing, loopback JWKS, and Redis fixture publication.
+Use `make conformance-bless` to
 replace all selected baselines transactionally after a fully successful run. Generated checkouts,
 results, reports, and logs stay under `.integration/`.
 

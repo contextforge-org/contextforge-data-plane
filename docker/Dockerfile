@@ -7,15 +7,14 @@ apt install -y ca-certificates protobuf-compiler
 EOF
 
 COPY . .
-# Production by default. Only test image builds may add with_tools.
-ARG CARGO_FEATURES=plugins
+# Production builds exclude the testing-only with_tools feature.
 RUN --mount=type=cache,id=cargo,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo fetch --locked
 RUN --mount=type=cache,id=cargo,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=contextforge-data-plane-target,target=/app/target,sharing=locked \
-    cargo build --locked --release -p contextforge-data-plane --features "$CARGO_FEATURES" \
+    cargo build --locked --release -p contextforge-data-plane --features plugins \
     && mkdir -p /out \
     && cp /app/target/release/contextforge-data-plane /out/contextforge-data-plane
 
