@@ -76,6 +76,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          # Match the PR revision selected by /conformance.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
       - name: Build the workspace
@@ -87,10 +90,10 @@ jobs:
       - name: Upload the conformance binary
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: contextforge-data-plane-conformance-${{ github.sha }}
+          name: contextforge-data-plane-conformance-${{ github.event.pull_request.head.sha || github.sha }}
           path: target/debug/contextforge-data-plane
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
 
   bench:
     runs-on: ubuntu-latest
