@@ -64,7 +64,7 @@ pub(super) async fn connect_backend_for_request(
     )
     .with_protocol_version(backend.mcp_protocol_version.clone());
 
-    let backend_client = GatewayBackendClient::new(client_info, mcp_service.plugin_runtime.clone());
+    let backend_client = GatewayBackendClient::new(client_info);
 
     serve_client_with_lifecycle_and_ct(
         backend_client,

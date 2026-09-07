@@ -1,3 +1,4 @@
+//! CPEX manager lifecycle and the common pre/post execution path.
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -9,29 +10,15 @@ use cpex::cpex_core::{
     context::PluginContextTable,
     executor::PipelineResult,
     factory::PluginFactoryRegistry,
-    hooks::{payload::Extensions, types::cmf_hook_names},
+    hooks::payload::Extensions,
     manager::PluginManager,
 };
-use rmcp::{
-    ErrorData,
-    model::{CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, ReadResourceResult},
-    serde::{Serialize, de::DeserializeOwned},
-};
-use tokio::sync::Mutex;
+use rmcp::ErrorData;
 
 use crate::{
-    cmf::{
-        prompt_request_payload, prompt_result_payload, resource_request_payload, resource_result_payload,
-        tool_call_payload, tool_json_result_payload, tool_result_payload,
-    },
+    cmf::{CmfResponse, Operation, modified_message_payload, plugin_denied_error},
     error::GatewayPluginRuntimeError,
     factory::supported_cmf_hook_name,
-    hooks::{PromptPreFetchResult, RuntimeHookState, ToolArgumentsUpdate, ToolPreCallResult},
-    pipeline::{
-        effective_post_json, effective_post_prompt_result, effective_post_resource_result, effective_post_result,
-        effective_pre_args, effective_pre_prompt_args, effective_pre_resource_uri, log_pipeline_errors,
-        plugin_denied_error,
-    },
 };
 
 #[derive(Default)]
@@ -41,93 +28,115 @@ struct HookPair {
 }
 
 #[derive(Default)]
-struct HookPresence {
-    tool: HookPair,
-    prompt: HookPair,
-    resource: HookPair,
-}
-
-#[derive(Default)]
 pub(crate) struct GatewayPluginRuntime {
     manager: PluginManager,
-    hooks: HookPresence,
+    hooks: [HookPair; 3],
 }
 
-struct ToolCallState {
+/// Pins the selected runtime and correlation context until the request finishes.
+/// Only tool calls wrap this in a mutex, because events also update their context.
+pub(crate) struct CallState {
+    runtime: Arc<GatewayPluginRuntime>,
     context_table: PluginContextTable,
-    tool_call_id: String,
+    name: String,
+    id: String,
 }
-
-type SharedToolCallState = Mutex<ToolCallState>;
 
 static CORRELATION_ID: AtomicU64 = AtomicU64::new(1);
 
-fn next_tool_call_id() -> String {
-    format!("gateway-tool-call-{}", CORRELATION_ID.fetch_add(1, Ordering::Relaxed))
-}
-
-fn new_tool_call_state() -> RuntimeHookState {
-    Arc::new(Mutex::new(ToolCallState {
-        context_table: PluginContextTable::default(),
-        tool_call_id: next_tool_call_id(),
-    }))
-}
-
-fn next_prompt_request_id() -> String {
-    format!("gateway-prompt-request-{}", CORRELATION_ID.fetch_add(1, Ordering::Relaxed))
-}
-
-struct PromptCallState {
-    context_table: PluginContextTable,
-    prompt_request_id: String,
-}
-
-fn new_prompt_call_state(context_table: PluginContextTable, prompt_request_id: String) -> RuntimeHookState {
-    Arc::new(PromptCallState { context_table, prompt_request_id })
-}
-
-pub(crate) struct ResourceCallState {
-    context_table: PluginContextTable,
-    resource_request_id: String,
-}
-
-fn next_resource_request_id() -> String {
-    format!("gateway-resource-request-{}", CORRELATION_ID.fetch_add(1, Ordering::Relaxed))
-}
-
 impl GatewayPluginRuntime {
-    pub(crate) fn has_post_hook(&self) -> bool {
-        self.hooks.tool.post
-    }
-
-    pub(crate) fn has_prompt_post_hook(&self) -> bool {
-        self.hooks.prompt.post
-    }
-
     pub(crate) async fn from_config(
         config: CpexConfig,
         factories: &PluginFactoryRegistry,
     ) -> Result<Self, GatewayPluginRuntimeError> {
         validate_gateway_supported_config(&config)?;
 
-        let hooks = HookPresence {
-            tool: HookPair {
-                pre: declares(&config, cmf_hook_names::TOOL_PRE_INVOKE),
-                post: declares(&config, cmf_hook_names::TOOL_POST_INVOKE),
-            },
-            prompt: HookPair {
-                pre: declares(&config, cmf_hook_names::PROMPT_PRE_FETCH),
-                post: declares(&config, cmf_hook_names::PROMPT_POST_FETCH),
-            },
-            resource: HookPair {
-                pre: declares(&config, cmf_hook_names::RESOURCE_PRE_FETCH),
-                post: declares(&config, cmf_hook_names::RESOURCE_POST_FETCH),
-            },
-        };
+        let hooks = Operation::ALL.map(|operation| {
+            let [pre, post] = operation.hooks().map(|name| declares(&config, name));
+            HookPair { pre, post }
+        });
         let manager = PluginManager::from_config(config, factories)
             .map_err(|source| GatewayPluginRuntimeError::Configuration { hook: "config", source })?;
         manager.initialize().await.map_err(|source| GatewayPluginRuntimeError::Initialization { source })?;
         Ok(Self { manager, hooks })
+    }
+
+    pub(crate) async fn before<U: Default>(
+        self: &Arc<Self>,
+        operation: Operation,
+        name: &str,
+        payload: impl FnOnce(&str) -> MessagePayload,
+        update: impl FnOnce(&MessagePayload, &str) -> Result<U, ErrorData>,
+    ) -> Result<(U, Option<CallState>), ErrorData> {
+        let hooks = &self.hooks[operation as usize];
+        if !hooks.pre && !hooks.post {
+            return Ok((U::default(), None));
+        }
+
+        let id = format!("{}-{}", operation.id_prefix(), CORRELATION_ID.fetch_add(1, Ordering::Relaxed));
+        let (update, context_table) = if hooks.pre {
+            let result = self.invoke(operation.hooks()[0], payload(&id), None).await;
+            if result.is_denied() {
+                return Err(plugin_denied_error(operation.subject(), result));
+            }
+            let update = match modified_message_payload(&result) {
+                Some(payload) => update(payload, &id)?,
+                None => U::default(),
+            };
+            (update, result.context_table)
+        } else {
+            (U::default(), PluginContextTable::default())
+        };
+        let state =
+            hooks.post.then(|| CallState { runtime: Arc::clone(self), context_table, name: name.to_owned(), id });
+        Ok((update, state))
+    }
+
+    async fn invoke(
+        &self,
+        hook: &'static str,
+        payload: MessagePayload,
+        context_table: Option<PluginContextTable>,
+    ) -> PipelineResult {
+        let (result, background_tasks) =
+            self.manager.invoke_named::<CmfHook>(hook, payload, Extensions::default(), context_table).await;
+        for error in &result.errors {
+            tracing::warn!(
+                hook,
+                plugin = error.plugin_name,
+                code = error.code.as_deref().unwrap_or(""),
+                proto_error_code = error.proto_error_code,
+                "CPEX plugin soft error"
+            );
+        }
+        drop(background_tasks);
+        result
+    }
+}
+
+impl CallState {
+    pub(crate) async fn after<T: CmfResponse>(&mut self, response: T) -> Result<T, ErrorData> {
+        let result = self.invoke(&response).await?;
+        if result.is_denied() {
+            return Err(plugin_denied_error(T::OPERATION.subject(), result));
+        }
+        self.apply(response, &result)
+    }
+
+    pub(crate) async fn invoke<T: CmfResponse>(&mut self, response: &T) -> Result<PipelineResult, ErrorData> {
+        let payload = response.to_payload(&self.name, &self.id)?;
+        let result = self.runtime.invoke(T::OPERATION.hooks()[1], payload, Some(self.context_table.clone())).await;
+        if !result.is_denied() {
+            self.context_table = result.context_table.clone();
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn apply<T: CmfResponse>(&self, response: T, result: &PipelineResult) -> Result<T, ErrorData> {
+        match modified_message_payload(result) {
+            Some(payload) => response.apply_payload(payload, &self.name, &self.id),
+            None => Ok(response),
+        }
     }
 }
 
@@ -171,208 +180,4 @@ fn validate_gateway_supported_config(config: &CpexConfig) -> Result<(), GatewayP
     }
 
     Ok(())
-}
-
-impl GatewayPluginRuntime {
-    async fn invoke_cmf_hook(
-        &self,
-        hook_name: &'static str,
-        payload: MessagePayload,
-        context_table: Option<PluginContextTable>,
-    ) -> PipelineResult {
-        let (result, background_tasks) =
-            self.manager.invoke_named::<CmfHook>(hook_name, payload, Extensions::default(), context_table).await;
-        log_pipeline_errors(hook_name, &result);
-        drop(background_tasks);
-        result
-    }
-
-    pub(crate) async fn before_tool_call(
-        &self,
-        request: &CallToolRequestParams,
-        tool_name: &str,
-        backend_name: &str,
-    ) -> Result<ToolPreCallResult, ErrorData> {
-        if !self.hooks.tool.pre {
-            let state = self.hooks.tool.post.then(new_tool_call_state);
-            return Ok(ToolPreCallResult { arguments: ToolArgumentsUpdate::Unchanged, state });
-        }
-
-        let tool_call_id = next_tool_call_id();
-        let original_payload = tool_call_payload(request, tool_name, backend_name, &tool_call_id);
-        let pre_result = self.invoke_cmf_hook(cmf_hook_names::TOOL_PRE_INVOKE, original_payload, None).await;
-        if pre_result.is_denied() {
-            return Err(plugin_denied_error("tool call", pre_result));
-        }
-
-        let arguments = effective_pre_args(request.arguments.as_ref(), &pre_result)?;
-        let state = Mutex::new(ToolCallState { context_table: pre_result.context_table, tool_call_id });
-        Ok(ToolPreCallResult { arguments, state: Some(Arc::new(state)) })
-    }
-
-    pub(crate) async fn before_get_prompt(
-        &self,
-        request: &GetPromptRequestParams,
-        prompt_name: &str,
-        backend_name: &str,
-    ) -> Result<PromptPreFetchResult, ErrorData> {
-        if !self.hooks.prompt.pre {
-            let mut result = PromptPreFetchResult::unchanged();
-            result.state = self
-                .hooks
-                .prompt
-                .post
-                .then(|| new_prompt_call_state(PluginContextTable::default(), next_prompt_request_id()));
-            return Ok(result);
-        }
-
-        let prompt_request_id = next_prompt_request_id();
-        let payload = prompt_request_payload(request, prompt_name, backend_name, &prompt_request_id);
-        let pre_result = self.invoke_cmf_hook(cmf_hook_names::PROMPT_PRE_FETCH, payload, None).await;
-        if pre_result.is_denied() {
-            return Err(plugin_denied_error("prompt", pre_result));
-        }
-
-        let arguments = effective_pre_prompt_args(
-            request.arguments.as_ref(),
-            &pre_result,
-            prompt_name,
-            backend_name,
-            &prompt_request_id,
-        )?;
-        let state =
-            self.hooks.prompt.post.then(|| new_prompt_call_state(pre_result.context_table.clone(), prompt_request_id));
-        Ok(PromptPreFetchResult { arguments, state })
-    }
-
-    pub(crate) async fn before_read_resource(
-        &self,
-        resource_uri: &str,
-    ) -> Result<(Option<String>, Option<ResourceCallState>), ErrorData> {
-        if !self.hooks.resource.pre && !self.hooks.resource.post {
-            return Ok((None, None));
-        }
-
-        let resource_request_id = next_resource_request_id();
-        if !self.hooks.resource.pre {
-            return Ok((
-                None,
-                Some(ResourceCallState { context_table: PluginContextTable::default(), resource_request_id }),
-            ));
-        }
-
-        let payload = resource_request_payload(resource_uri, &resource_request_id);
-        let pre_result = self.invoke_cmf_hook(cmf_hook_names::RESOURCE_PRE_FETCH, payload, None).await;
-        if pre_result.is_denied() {
-            return Err(plugin_denied_error("resource", pre_result));
-        }
-        let uri = effective_pre_resource_uri(&pre_result)?;
-        Ok((
-            uri,
-            self.hooks
-                .resource
-                .post
-                .then_some(ResourceCallState { context_table: pre_result.context_table, resource_request_id }),
-        ))
-    }
-
-    pub(crate) async fn after_get_prompt(
-        &self,
-        prompt_name: &str,
-        response: GetPromptResult,
-        state: Option<RuntimeHookState>,
-    ) -> Result<GetPromptResult, ErrorData> {
-        if !self.hooks.prompt.post {
-            return Ok(response);
-        }
-
-        let state = state.and_then(|state| state.downcast::<PromptCallState>().ok());
-        let Some(state) = state else { return Ok(response) };
-
-        let payload = prompt_result_payload(&response, prompt_name, &state.prompt_request_id);
-        let post_result =
-            self.invoke_cmf_hook(cmf_hook_names::PROMPT_POST_FETCH, payload, Some(state.context_table.clone())).await;
-        if post_result.is_denied() {
-            return Err(plugin_denied_error("prompt", post_result));
-        }
-
-        effective_post_prompt_result(response, &post_result, prompt_name, &state.prompt_request_id)
-    }
-
-    pub(crate) async fn after_read_resource(
-        &self,
-        response: ReadResourceResult,
-        state: ResourceCallState,
-    ) -> Result<ReadResourceResult, ErrorData> {
-        let payload = resource_result_payload(&response, &state.resource_request_id)
-            .ok_or_else(|| ErrorData::internal_error("Resource response contains an unsupported content type", None))?;
-        let post_result =
-            self.invoke_cmf_hook(cmf_hook_names::RESOURCE_POST_FETCH, payload, Some(state.context_table)).await;
-        if post_result.is_denied() {
-            return Err(plugin_denied_error("resource", post_result));
-        }
-        effective_post_resource_result(response, &post_result)
-    }
-
-    pub(crate) async fn after_tool_call(
-        &self,
-        tool_name: &str,
-        response: CallToolResult,
-        state: Option<RuntimeHookState>,
-    ) -> Result<CallToolResult, ErrorData> {
-        if !self.hooks.tool.post {
-            return Ok(response);
-        }
-
-        let state = state.and_then(|state| state.downcast::<SharedToolCallState>().ok());
-        let Some(state) = state else { return Ok(response) };
-
-        let mut state = state.lock().await;
-        let post_result = self
-            .invoke_cmf_hook(
-                cmf_hook_names::TOOL_POST_INVOKE,
-                tool_result_payload(tool_name, &response, &state.tool_call_id),
-                Some(state.context_table.clone()),
-            )
-            .await;
-        if post_result.is_denied() {
-            return Err(plugin_denied_error("tool call", post_result));
-        }
-
-        state.context_table = post_result.context_table.clone();
-        Ok(effective_post_result(response, &post_result))
-    }
-
-    pub(crate) async fn after_tool_event<T>(
-        &self,
-        tool_name: &str,
-        event: T,
-        state: Option<RuntimeHookState>,
-    ) -> Result<Option<T>, ErrorData>
-    where
-        T: Serialize + DeserializeOwned,
-    {
-        if !self.hooks.tool.post {
-            return Ok(Some(event));
-        }
-
-        let state = state.and_then(|state| state.downcast::<SharedToolCallState>().ok());
-        let Some(state) = state else { return Ok(Some(event)) };
-
-        let content = serde_json::to_value(&event).unwrap_or(serde_json::Value::Null);
-        let mut state = state.lock().await;
-        let post_result = self
-            .invoke_cmf_hook(
-                cmf_hook_names::TOOL_POST_INVOKE,
-                tool_json_result_payload(tool_name, content, false, &state.tool_call_id),
-                Some(state.context_table.clone()),
-            )
-            .await;
-        if post_result.is_denied() {
-            return Ok(None);
-        }
-
-        state.context_table = post_result.context_table.clone();
-        Ok(Some(effective_post_json(event, &post_result)?))
-    }
 }

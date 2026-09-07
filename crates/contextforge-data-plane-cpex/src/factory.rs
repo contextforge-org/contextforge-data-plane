@@ -4,7 +4,7 @@ use cpex::cpex_core::{
     cmf::CmfHook,
     error::PluginError,
     factory::{PluginFactory, PluginInstance},
-    hooks::{HookHandler, TypedHandlerAdapter, types::cmf_hook_names},
+    hooks::{HookHandler, TypedHandlerAdapter},
     plugin::{Plugin, PluginConfig},
     registry::AnyHookHandler,
 };
@@ -46,13 +46,5 @@ where
 }
 
 pub(crate) fn supported_cmf_hook_name(hook: &str) -> Option<&'static str> {
-    match hook {
-        cmf_hook_names::TOOL_PRE_INVOKE => Some(cmf_hook_names::TOOL_PRE_INVOKE),
-        cmf_hook_names::TOOL_POST_INVOKE => Some(cmf_hook_names::TOOL_POST_INVOKE),
-        cmf_hook_names::PROMPT_PRE_FETCH => Some(cmf_hook_names::PROMPT_PRE_FETCH),
-        cmf_hook_names::PROMPT_POST_FETCH => Some(cmf_hook_names::PROMPT_POST_FETCH),
-        cmf_hook_names::RESOURCE_PRE_FETCH => Some(cmf_hook_names::RESOURCE_PRE_FETCH),
-        cmf_hook_names::RESOURCE_POST_FETCH => Some(cmf_hook_names::RESOURCE_POST_FETCH),
-        _ => None,
-    }
+    crate::cmf::Operation::ALL.into_iter().flat_map(crate::cmf::Operation::hooks).find(|name| *name == hook)
 }
