@@ -39,14 +39,16 @@ pub use crate::common::*;
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type Result<T> = std::result::Result<T, Error>;
 
-use crate::layers::{
-    claims_id::claims_layer,
-    mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
-    mcp_origin::mcp_origin_layer,
-    principal_extractor::principal_extractor_layer,
-    user_config_store::user_config_store_layer,
-    virtual_host_config::virtual_host_config_layer,
-    virtual_host_id::virtual_host_id_layer,
+use crate::{
+    authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor},
+    layers::{
+        claims_id::claims_layer,
+        mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
+        mcp_origin::mcp_origin_layer,
+        user_config_store::user_config_store_layer,
+        virtual_host_config::virtual_host_config_layer,
+        virtual_host_id::virtual_host_id_layer,
+    },
 };
 pub use authorization::{AuthorizationClaims, AuthorizationService, get_authorization_service};
 
@@ -146,16 +148,21 @@ impl Gateway {
         let app = axum::Router::new()
             .nest_service("/servers/{virtual_host_name}/mcp", mcp_service)
             .layer(middleware::from_fn(virtual_host_config_layer))
-            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer))
-            .layer(middleware::from_fn(principal_extractor_layer))
+            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer));
+
+        let app = if let Some(cel_principal_extractor_path) = config.cel_principal_extractor_path.as_ref() {
+            app.layer(layers::PrincipalExtractorLayer::new(CelPrincipalExtractor::from_file(
+                cel_principal_extractor_path,
+            )?))
+        } else {
+            app.layer(layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor {}))
+        };
+
+        let app = app
             .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), claims_layer))
             .layer(middleware::from_fn(virtual_host_id_layer))
-            // Keep this outside auth/config/RMCP work so oversized MCP headers
-            // are rejected before JWT validation or body parsing.
             .layer(middleware::from_fn_with_state(mcp_standard_header_limits, mcp_header_limits_layer))
             .layer(cors_layer)
-            // mcp_origin_layer is the outermost wrapper: fires before JWT auth,
-            // session creation, and backend fan-out.
             .layer(middleware::from_fn_with_state(config.clone(), mcp_origin_layer));
 
         #[cfg(feature = "with_tools")]

@@ -4,6 +4,7 @@ use contextforge_data_plane_apis::User;
 use tracing::{debug, info, warn};
 
 use crate::{
+    authorization::AuthorizedPrincipal,
     common::ContextForgeDataPlaneAppState,
     errors::{bad_request, internal_server_error},
     user_config_store::ConfigStoreError,
@@ -16,7 +17,7 @@ pub async fn user_config_store_layer(
 ) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
-    let maybe_principal = request.extensions().get::<super::AuthorizedPrincipal>();
+    let maybe_principal = request.extensions().get::<AuthorizedPrincipal>();
     if let Some(principal) = maybe_principal {
         debug!(
             "user_config_store_layer - getting user config for principal {principal:?} method = {method} path = {path}"

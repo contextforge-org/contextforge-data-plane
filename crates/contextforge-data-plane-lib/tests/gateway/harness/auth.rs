@@ -13,14 +13,12 @@ use super::TEST_USER_EMAIL;
 
 const TEST_TOKEN_TTL_SECS: u64 = 60 * 60;
 
-pub(crate) fn token(user_id: &str) -> String {
-    let key = EncodingKey::from_rsa_pem(&fs::read("../../assets/jwt.key").expect("jwt key")).expect("encoding key");
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some("test".to_owned());
+fn default_claims(user_id: &str) -> serde_json::Value {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_secs();
-    let claims = json!({
+    json!({
         "iss": "mcpgateway",
         "sub": user_id,
+        "tenant_id": "test_tenant",
         "aud": "mcpgateway-api",
         "exp": now + TEST_TOKEN_TTL_SECS,
         "iat": now,
@@ -39,8 +37,14 @@ pub(crate) fn token(user_id: &str) -> String {
             "ip_restrictions": ["192.169.1.0/24"],
             "time_restrictions": null
         },
-    });
-    encode(&header, &claims, &key).expect("jwt token")
+    })
+}
+
+pub(crate) fn token(user_id: &str) -> String {
+    let key = EncodingKey::from_rsa_pem(&fs::read("../../assets/jwt.key").expect("jwt key")).expect("encoding key");
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("test".to_owned());
+    encode(&header, &default_claims(user_id), &key).expect("jwt token")
 }
 
 #[derive(Debug)]
@@ -53,11 +57,10 @@ impl AlwaysAllowAuthorizatioService {
         Self { user }
     }
 }
+
 #[async_trait]
 impl AuthorizationService for AlwaysAllowAuthorizatioService {
     async fn authorize(&self, _: &HeaderValue) -> Option<AuthorizationClaims> {
-        let mut claims = AuthorizationClaims::default();
-        claims.sub.clone_from(&self.user);
-        Some(claims)
+        Some(AuthorizationClaims::from(default_claims(&self.user)))
     }
 }

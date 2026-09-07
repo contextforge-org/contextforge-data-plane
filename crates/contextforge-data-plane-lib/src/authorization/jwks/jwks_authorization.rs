@@ -1,5 +1,4 @@
 use crate::authorization::jwks::jwks::Jwks;
-use crate::authorization::jwks::principal::DefaultPrincipalExtractor;
 use crate::authorization::{AuthorizationClaims, AuthorizationError, AuthorizationService};
 use async_trait::async_trait;
 use jsonwebtoken::decode_header;
@@ -14,7 +13,7 @@ const JWKS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const JWKS_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct JwtAuthorizationService {
-    jwks: Jwks<super::principal::DefaultPrincipalExtractor>,
+    jwks: Jwks,
 }
 
 impl JwtAuthorizationService {
@@ -31,9 +30,7 @@ impl JwtAuthorizationService {
             client = client.tls_certs_only(load_ca_certificates(ca_cert_path)?);
         }
         let client = client.build().map_err(AuthorizationError::JwksRequest)?;
-        Ok(Self {
-            jwks: Jwks::builder().client(client).url(url).principal_extractor(DefaultPrincipalExtractor {}).build(),
-        })
+        Ok(Self { jwks: Jwks::builder().client(client).url(url).build() })
     }
 
     async fn authorize_token(&self, token: &str) -> Option<AuthorizationClaims> {
@@ -97,7 +94,6 @@ mod test {
             JwtAuthorizationService,
             jwks::{JWKS_CACHE_KEY, Jwks, VerificationKey},
             jwks_authorization::{JWKS_CONNECT_TIMEOUT, JWKS_READ_TIMEOUT, JWKS_REQUEST_TIMEOUT},
-            principal::DefaultPrincipalExtractor,
         },
     };
     use crate::{
@@ -114,6 +110,7 @@ mod test {
     use http::{HeaderMap, Request, StatusCode};
     use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode};
     use lru_time_cache::LruCache;
+    use serde_json::json;
 
     use std::sync::{Arc, Once};
     use std::{str::FromStr, time::Duration};
@@ -129,6 +126,23 @@ mod test {
     impl VerificationKey {
         pub fn new(id: Option<String>, decoding_key: DecodingKey) -> Self {
             Self { key_id: id, decoding_key }
+        }
+    }
+
+    impl AuthorizationClaims {
+        fn clear(&mut self, name: &str) {
+            if let Some(value) = self.value.get_mut(name) {
+                *value = serde_json::Value::Null;
+            }
+        }
+
+        fn set(&mut self, name: &str, new_value: serde_json::Value) {
+            if let Some(value) = self.value.get_mut(name) {
+                *value = new_value;
+            }
+        }
+        fn get(&mut self, name: &str) -> Option<&serde_json::Value> {
+            self.value.get(name)
         }
     }
 
@@ -150,14 +164,7 @@ mod test {
             guard.insert(JWKS_CACHE_KEY.to_owned(), verification_keys);
             drop(guard);
 
-            Ok(Self {
-                jwks: Jwks::builder()
-                    .cache(cache)
-                    .client(client)
-                    .url(url)
-                    .principal_extractor(DefaultPrincipalExtractor {})
-                    .build(),
-            })
+            Ok(Self { jwks: Jwks::builder().cache(cache).client(client).url(url).build() })
         }
     }
 
@@ -172,40 +179,36 @@ mod test {
         let now = now_epoch_seconds();
         let user_id = "11111111-1111-1111-1111-111111111111".to_owned();
 
-        AuthorizationClaims {
-            iss: GATEWAY_ISSUER.to_owned(),
-            sub: user_id.clone(),
-            aud: GATEWAY_AUDIENCE.to_owned(),
-            exp: now + Duration::from_hours(1).as_secs(),
-            nbf: Some(now - Duration::from_mins(1).as_secs()),
-            iat: Some(now),
-            jti: Uuid::new_v4().to_string(),
-            token_use: Some("api".to_owned()),
-            teams: Some(vec!["team_awesome".to_owned()]),
-            user: Some(
-                crate::authorization::User::builder()
-                    .tenant_id("team_awesome".to_owned())
-                    .user_id(user_id.clone())
-                    .build(),
-            ),
-            scopes: Some(
-                Scopes::builder()
-                    .server_id(Some("my_id".to_owned()))
-                    .ip_restrictions(vec!["192.169.1.0/24".to_owned()])
-                    .permissions(vec!["tools.read".to_owned(), "servers.use".to_owned()])
-                    .time_restrictions(None)
-                    .build(),
-            ),
-            tenant_id: "tenant".to_owned(),
-            ..Default::default()
-        }
+        let map = json!( {
+            "iss": GATEWAY_ISSUER.to_owned(),
+            "sub": user_id.clone(),
+            "aud": GATEWAY_AUDIENCE.to_owned(),
+            "exp": now + Duration::from_hours(1).as_secs(),
+            "nbf": now - Duration::from_mins(1).as_secs(),
+            "iat": now,
+            "jti": Uuid::new_v4().to_string(),
+            "token_use": Some("api".to_owned()),
+            "teams": vec!["team_awesome".to_owned()],
+            "user": crate::authorization::User::builder()
+                .tenant_id("team_awesome".to_owned())
+                .user_id(user_id.clone())
+                .build(),
+            "scopes": Scopes::builder()
+                .server_id(Some("my_id".to_owned()))
+                .ip_restrictions(vec!["192.169.1.0/24".to_owned()])
+                .permissions(vec!["tools.read".to_owned(), "servers.use".to_owned()])
+                .time_restrictions(None)
+                .build(),
+            "tenant_id": "tenant".to_owned(),
+        });
+        AuthorizationClaims::from(map)
     }
 
     fn get_hmac_token_for_claims(claims: &AuthorizationClaims) -> String {
         let key = EncodingKey::from_secret(HMAC_SECRET);
         let header = Header::new(Algorithm::HS256);
-
-        encode::<AuthorizationClaims>(&header, claims, &key).expect("Expecting this to work")
+        let claims = claims.value.clone();
+        encode::<serde_json::Value>(&header, &claims, &key).expect("Expecting this to work")
     }
 
     struct MockedUserConfigStore;
@@ -218,6 +221,14 @@ mod test {
         async fn set_config<'a>(&self, _: &'a User, _: &'a UserConfig) -> Result<(), ConfigStoreError> {
             Err(ConfigStoreError::InvalidConnection)
         }
+    }
+
+    #[test]
+    fn test_active_token() {
+        let mut claims = active_test_claims();
+        assert_ne!(claims.get("exp").and_then(serde_json::Value::as_i64), Some(0_i64));
+        claims.set("exp", 0.into());
+        assert_eq!(claims.get("exp").and_then(serde_json::Value::as_i64), Some(0_i64));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -269,7 +280,7 @@ mod test {
         }
 
         let mut claims = active_test_claims();
-        claims.scopes = None;
+        claims.clear("scopes");
         let token = get_hmac_token_for_claims(&claims);
 
         let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
@@ -307,11 +318,18 @@ mod test {
         }
 
         let mut claims = active_test_claims();
-        claims.token_use = None;
-
-        claims.user = Some(
-            crate::authorization::User::builder().tenant_id("team_awesome".to_owned()).user_id(user_id.clone()).build(),
+        claims.clear("token_use");
+        claims.set(
+            "user",
+            serde_json::to_value(
+                crate::authorization::User::builder()
+                    .tenant_id("team_awesome".to_owned())
+                    .user_id(user_id.clone())
+                    .build(),
+            )
+            .expect("should work"),
         );
+
         let token = get_hmac_token_for_claims(&claims);
 
         let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
@@ -349,7 +367,7 @@ mod test {
         }
 
         let mut claims = active_test_claims();
-        claims.exp = 0;
+        claims.set("exp", 1000.into());
         let token = get_hmac_token_for_claims(&claims);
 
         let decoding_key = DecodingKey::from_secret(HMAC_SECRET);

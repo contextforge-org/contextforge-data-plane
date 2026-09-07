@@ -29,7 +29,6 @@ tower = "0.5.3"
 http.workspace = true
 futures = { version = "0.3", features = ["std", "alloc"] }
 jsonwebtoken.workspace = true
-chrono = "0.4.44"
 redis.workspace = true
 clap.workspace = true
 thiserror.workspace = true
@@ -46,7 +45,7 @@ rustls-pki-types = { version = "1.14.1", features = ["std", "alloc"] }
 tokio-rustls = "0.26.4"
 typed-builder = "0.23.2"
 url = { workspace = true, features = ["serde"] }
-
+cel = "0.14.4"
 
 
 
