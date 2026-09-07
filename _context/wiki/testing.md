@@ -74,8 +74,10 @@ repository keeps only the CI invocation, Make targets, and expected findings.
 
 Comment exactly `/conformance` on a pull request to run the **Conformance**
 Actions workflow. Only repository owners, members, and collaborators can start
-it. The workflow acknowledges the command, tests the pull request merge commit,
-and reports the final result back to the pull request. It runs the modern client
+it. The workflow acknowledges the command, tests the pull request head commit,
+and reports the final result back to the pull request. CI builds and names the
+conformance binary artifact using that same head SHA and retains it for 90 days,
+so changes to `main` do not invalidate the artifact. It runs the modern client
 and modern server eras through the external dataplane in standalone mode. This
 starts Redis, the dataplane, nginx, and the official fixture without the control
 plane. The harness discovers the fixture's tools, resources, templates, and

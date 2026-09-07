@@ -35,7 +35,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: >-
           gh api "repos/$REPOSITORY/pulls/$PR_NUMBER"
-          --jq '"head_sha=\(.head.sha)\nmerge_sha=\(.merge_commit_sha)"'
+          --jq '"head_sha=\(.head.sha)"'
           >> "$GITHUB_OUTPUT"
 
       - name: Publish the pending PR status
@@ -56,7 +56,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ steps.revision.outputs.merge_sha }}
+          ref: ${{ steps.revision.outputs.head_sha }}
 
       - uses: taiki-e/install-action@v2.75.27
         with:
