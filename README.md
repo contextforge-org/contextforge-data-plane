@@ -1,5 +1,7 @@
 # ContextForge Data Plane
 
+<!-- Temporary PR to verify /conformance with an artifact built from the PR head. -->
+
 The Rust data plane for
 [ContextForge](https://github.com/IBM/mcp-context-forge). It accepts modern MCP
 traffic, loads control-plane-published configuration from Redis, and routes
