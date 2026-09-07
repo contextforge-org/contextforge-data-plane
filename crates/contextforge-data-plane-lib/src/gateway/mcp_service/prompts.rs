@@ -1,4 +1,4 @@
-use contextforge_data_plane_cpex::PromptPreFetchResult;
+use contextforge_data_plane_cpex::PreHookResult;
 use rmcp::{
     ErrorData, RoleServer,
     model::{ErrorCode, GetPromptRequestParams, GetPromptResponse},
@@ -38,21 +38,21 @@ pub(super) async fn get_prompt(
     let pre_result = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
         plugin_runtime.before_get_prompt(&request, &prompt_name, &backend_name).await?
     } else {
-        PromptPreFetchResult::unchanged()
+        PreHookResult::default()
     };
     let mut backend_service = connect_backend_for_request(mcp_service, &backend_name, backend, &cx).await?;
     let mut routed_request = request;
-    pre_result.arguments.apply_to_request(&mut routed_request, &prompt_name);
+    routed_request.name.clone_from(&prompt_name);
+    pre_result.arguments.apply_to(&mut routed_request.arguments);
     let response = backend_service.get_prompt(routed_request).await;
     if let Err(error) = backend_service.close().await {
         tracing::warn!("get_prompt: backend cleanup failed backend_name = {backend_name} error = {error:?}");
     }
     let response = response.map_err(|error| backend_forward_error("get_prompt", &backend_name, &error))?;
     info!("get_prompt: backend {backend_name} returned {} messages", response.messages.len());
-    let response = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
-        plugin_runtime.after_get_prompt(&prompt_name, response, pre_result.state).await?
-    } else {
-        response
+    let response = match pre_result.state {
+        Some(state) => state.after_get_prompt(response).await?,
+        None => response,
     };
     Ok(response.into())
 }

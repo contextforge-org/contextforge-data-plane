@@ -1,4 +1,4 @@
-use contextforge_data_plane_cpex::ToolPreCallResult;
+use contextforge_data_plane_cpex::PreHookResult;
 use http::request::Parts;
 use rmcp::{
     ErrorData, RoleServer,
@@ -55,24 +55,18 @@ pub(super) async fn call_tool(
     let pre_result = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
         plugin_runtime.before_tool_call(&request, &tool_name, &backend_name).await?
     } else {
-        ToolPreCallResult::unchanged()
+        PreHookResult::default()
     };
     let mut backend_service = connect_backend_for_request(mcp_service, &backend_name, backend, &cx).await?;
     let post_state = pre_result.state;
     let mut routed_request = request;
-    pre_result.arguments.apply_to_request(&mut routed_request, &tool_name);
+    routed_request.name = tool_name.clone().into();
+    pre_result.arguments.apply_to(&mut routed_request.arguments);
 
     let progress_token = cx.meta.get_progress_token();
     let handle = backend_service
         .service()
-        .start_tool_call(
-            backend_service.peer(),
-            routed_request,
-            progress_token,
-            tool_name.clone(),
-            cx.peer.clone(),
-            post_state.clone(),
-        )
+        .start_tool_call(backend_service.peer(), routed_request, progress_token, cx.peer.clone(), post_state.clone())
         .await
         .map_err(|error| backend_forward_error("call_tool", &backend_name, &error))?;
     let backend_progress_token = handle.progress_token.clone();
@@ -83,11 +77,9 @@ pub(super) async fn call_tool(
     }
 
     let response = response.map_err(|error| backend_forward_error("call_tool", &backend_name, &error))?;
-    let response = match (&mcp_service.plugin_runtime, post_state) {
-        (Some(plugin_runtime), Some(post_state)) => {
-            plugin_runtime.after_tool_call(&tool_name, response, Some(post_state)).await?
-        },
-        _ => response,
+    let response = match post_state {
+        Some(state) => state.after_tool_call(response).await?,
+        None => response,
     };
     info!("call_tool: backend {backend_name} completed");
     Ok(response.into())

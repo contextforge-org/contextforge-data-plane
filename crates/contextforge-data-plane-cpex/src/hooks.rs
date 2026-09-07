@@ -1,59 +1,38 @@
-use std::{any::Any, sync::Arc};
-
-use rmcp::model::{CallToolRequestParams, GetPromptRequestParams};
 use serde_json::{Map, Value};
 
 pub type RuntimeHookError = Box<dyn std::error::Error + Send + Sync + 'static>;
-pub type RuntimeHookState = Arc<dyn Any + Send + Sync + 'static>;
 
-#[derive(Debug)]
-pub enum ToolArgumentsUpdate {
+#[derive(Debug, Default)]
+pub enum ArgumentsUpdate {
+    #[default]
     Unchanged,
     Replace(Option<Map<String, Value>>),
 }
 
-impl ToolArgumentsUpdate {
-    pub fn apply_to_request(self, request: &mut CallToolRequestParams, routed_tool_name: &str) {
-        request.name = routed_tool_name.to_owned().into();
-        if let Self::Replace(arguments) = self {
-            request.arguments = arguments;
+impl ArgumentsUpdate {
+    pub(crate) fn from_modified(original: Option<&Map<String, Value>>, modified: Map<String, Value>) -> Self {
+        if original == Some(&modified) || (original.is_none() && modified.is_empty()) {
+            Self::Unchanged
+        } else {
+            Self::Replace(Some(modified))
+        }
+    }
+
+    pub fn apply_to(self, arguments: &mut Option<Map<String, Value>>) {
+        if let Self::Replace(replacement) = self {
+            *arguments = replacement;
         }
     }
 }
 
-pub struct ToolPreCallResult {
-    pub arguments: ToolArgumentsUpdate,
-    pub state: Option<RuntimeHookState>,
+/// Argument edits and the typed post-hook state captured before backend I/O.
+pub struct PreHookResult<S> {
+    pub arguments: ArgumentsUpdate,
+    pub state: Option<S>,
 }
 
-impl ToolPreCallResult {
-    pub fn unchanged() -> Self {
-        Self { arguments: ToolArgumentsUpdate::Unchanged, state: None }
-    }
-}
-
-#[derive(Debug)]
-pub enum PromptArgumentsUpdate {
-    Unchanged,
-    Replace(Option<Map<String, Value>>),
-}
-
-impl PromptArgumentsUpdate {
-    pub fn apply_to_request(self, request: &mut GetPromptRequestParams, routed_prompt_name: &str) {
-        routed_prompt_name.clone_into(&mut request.name);
-        if let Self::Replace(arguments) = self {
-            request.arguments = arguments;
-        }
-    }
-}
-
-pub struct PromptPreFetchResult {
-    pub arguments: PromptArgumentsUpdate,
-    pub state: Option<RuntimeHookState>,
-}
-
-impl PromptPreFetchResult {
-    pub fn unchanged() -> Self {
-        Self { arguments: PromptArgumentsUpdate::Unchanged, state: None }
+impl<S> Default for PreHookResult<S> {
+    fn default() -> Self {
+        Self { arguments: ArgumentsUpdate::Unchanged, state: None }
     }
 }

@@ -49,4 +49,31 @@ For clients on `≥ 2026-07-28`, `call_tool` validates `Mcp-Param-*` headers aga
 
 ## Plugin hooks
 
-`call_tool` and `get_prompt` run `before_*/after_*` hooks when a `GatewayPluginRuntimeHandle` is configured. Pre-hook may rewrite arguments or deny; post-hook may rewrite or reject the response. Pre-hook state is passed to the post-hook.
+`call_tool`, `get_prompt`, and `read_resource` run pre/post hooks when a
+`GatewayPluginRuntimeHandle` is configured. Pre-hooks can deny a request or edit
+tool/prompt arguments or the resource URI. Resource URI edits must resolve through
+the caller's published routes. Post-hooks can rewrite or reject the response.
+
+The handle selects a runtime before backend I/O. It returns typed request state
+whose `after_*` method runs the post-hook on that same runtime, even after a reload
+or a reload failure. A request that started without post-hooks never gains one
+mid-flight. Tool state is shared under a mutex so progress notifications and the
+final response use the same correlation ID and serialize plugin-context updates.
+Prompt and resource state is owned by a single request and needs no mutex.
+
+The internal CPEX crate separates these responsibilities:
+
+| Module | Owns |
+| --- | --- |
+| `registry/` | Runtime selection, factory registration, config reloads, and the watcher |
+| `runtime.rs` | Manager lifecycle, shared pre/post execution, and request context |
+| `tools/`, `prompts/`, `resources/` | Typed request state, operation-specific CMF conversion, and conversion tests |
+| `cmf.rs` | Hook inventory, message envelopes, and the `CmfResponse` conversion trait |
+| `hooks.rs` | Shared argument edits and pre-hook results |
+| `config.rs`, `factory.rs` | Config decoding/storage and compiled-in plugin factories |
+
+Each response adapter implements `CmfResponse`; the runner handles invocation,
+unchanged payloads, context propagation, and denial. Conversion and rejection
+rules remain operation-specific: tools, rendered prompts, and resource reads
+have different MCP representations. See [Config](config.md#tool-call-hook-behavior)
+for those contracts.

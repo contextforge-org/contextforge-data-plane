@@ -2,15 +2,17 @@ mod cmf;
 mod config;
 mod error;
 mod factory;
-mod handle;
 mod hooks;
-mod pipeline;
+mod prompts;
+mod registry;
+mod resources;
 mod runtime;
+mod tools;
 
 pub use error::GatewayPluginRuntimeError;
 pub use factory::CmfPluginFactory;
-pub use handle::{CpexRuntimeRegistry, GatewayPluginRuntimeHandle, ResourceHookState};
-pub use hooks::{
-    PromptArgumentsUpdate, PromptPreFetchResult, RuntimeHookError, RuntimeHookState, ToolArgumentsUpdate,
-    ToolPreCallResult,
-};
+pub use hooks::{ArgumentsUpdate, PreHookResult, RuntimeHookError};
+pub use prompts::PromptHookState;
+pub use registry::{CpexRuntimeRegistry, GatewayPluginRuntimeHandle};
+pub use resources::ResourceHookState;
+pub use tools::ToolHookState;
