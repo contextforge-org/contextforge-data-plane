@@ -96,9 +96,9 @@ loopback JWKS; the production dataplane receives no signing key. Selecting that
 lane also runs the fixture-direct server leg and the scoped external-dataplane
 client leg:
 
-Install the pinned harness revision from
+Install the pinned harness version from
 [Getting Started](getting-started.md#cf-integration-conformance), then run
-`make conformance`. CI installs that same revision; conformance and Inspector
+`make conformance`. CI installs that same version; conformance and Inspector
 install and run Node/npm only inside Docker images.
 
 The Make target tests the committed data-plane `HEAD` and rejects tracked

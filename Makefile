@@ -31,7 +31,7 @@ compose-down: ## Tear down the stack
 
 conformance: ## Run strict modern MCP conformance against the committed data-plane HEAD
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
-		echo "cf-integration not found: follow _context/wiki/getting-started.md or set CF_INTEGRATION to its path."; \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
 		exit 1; \
 	fi
 	@if [ -n "$$(git -C "$(CF_DATAPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
@@ -51,7 +51,7 @@ conformance: ## Run strict modern MCP conformance against the committed data-pla
 
 conformance-bless: ## Run strict modern conformance and atomically update its baselines
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
-		echo "cf-integration not found: follow _context/wiki/getting-started.md or set CF_INTEGRATION to its path."; \
+		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
 		exit 1; \
 	fi
 	@if [ -n "$$(git -C "$(CF_DATAPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
