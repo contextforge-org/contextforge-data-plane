@@ -35,8 +35,14 @@ Teardown: `make compose-down` (stops containers; volumes kept).
 
 ## cf-integration Conformance
 
+Install the same harness revision pinned by the conformance workflow (Rust
+1.97 is required to build it). Official conformance packages and their Node/npm
+runtime are installed only inside Docker images.
+
 ```bash
-cargo binstall cf-integration@0.3.2 --no-confirm
+cargo +1.97.0 install --locked \
+  --git https://github.com/contextforge-org/contextforge-dev-tools \
+  --rev 957eeb1a846c2d44c417707e45d2673a746805f2 cf-integration
 make conformance
 ```
 

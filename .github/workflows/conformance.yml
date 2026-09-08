@@ -11,6 +11,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CF_INTEGRATION_REV: 957eeb1a846c2d44c417707e45d2673a746805f2 # pragma: allowlist secret (public Git revision)
 
 jobs:
   conformance:
@@ -58,12 +59,13 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.revision.outputs.head_sha }}
 
-      - uses: taiki-e/install-action@v2.75.27
-        with:
-          tool: cargo-binstall
+      - uses: dtolnay/rust-toolchain@1.97.0
 
-      - name: Install cf-integration 0.3.2 binary
-        run: cargo binstall cf-integration@0.3.2 --no-confirm
+      - name: Install the pinned cf-integration revision
+        run: >-
+          cargo install --locked
+          --git https://github.com/contextforge-org/contextforge-dev-tools
+          --rev "$CF_INTEGRATION_REV" cf-integration
 
       - name: Prepare the exact data-plane image
         env:
@@ -73,11 +75,6 @@ jobs:
           --artifact contextforge-data-plane-conformance
           --binary contextforge-data-plane
           --image contextforge-data-plane:conformance
-
-      - name: Install Node.js 22
-        uses: actions/setup-node@v6.5.0
-        with:
-          node-version: 22
 
       - name: Run strict modern conformance
         id: conformance
