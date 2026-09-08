@@ -8,7 +8,7 @@ use cpex::cpex_core::{
 };
 use rmcp::{ErrorData, model::ErrorCode};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug, Copy)]
 pub(crate) enum Operation {
     Tool,
     Prompt,

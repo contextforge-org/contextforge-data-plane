@@ -12,7 +12,7 @@ use redis::{
     cmd,
 };
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{debug, instrument, warn};
 
 use super::{ConfigStoreError, UserConfigStore};
 use crate::{
@@ -67,6 +67,7 @@ impl RedisUserConfigStore {
 
 #[async_trait]
 impl UserConfigStore for RedisUserConfigStore {
+    #[instrument(name = "user_config_store_get_config", level = "info", skip(self))]
     async fn get_config<'a>(&self, user_key: &'a User) -> Result<UserConfig, ConfigStoreError> {
         let subject = user_key.key();
 
@@ -136,6 +137,7 @@ impl UserConfigStore for RedisUserConfigStore {
         Ok(user_config)
     }
 
+    #[instrument(name = "user_config_store_set_config", level = "info", skip(self, config))]
     async fn set_config<'a>(&self, user_key: &'a User, config: &'a UserConfig) -> Result<(), ConfigStoreError> {
         let subject = user_key.key();
 

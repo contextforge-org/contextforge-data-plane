@@ -128,7 +128,7 @@ impl GatewayPluginRuntimeHandle {
             .current()?
             .before(
                 Operation::Resource,
-                "",
+                resource_uri,
                 |id| resource_request_payload(resource_uri, id),
                 |payload, _| {
                     let [ContentPart::ResourceRef { content }] = payload.message.content.as_slice() else {

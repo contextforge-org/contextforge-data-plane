@@ -5,19 +5,6 @@ use tracing::debug;
 
 use crate::{AuthorizationClaims, authorization::PrincipalExtractor, errors::unauthorized_response};
 
-// pub async fn principal_extractor_layer(request: http::Request<axum::body::Body>, next: Next) -> Response {
-//     let maybe_claims = request.extensions().get::<AuthorizationClaims>();
-//     let Some(Ok(authorized_principal)) = maybe_claims.map(|claims| {
-//         AuthorizedPrincipal::try_from(claims).inspect_err(|e| debug!("Can't extract the principal {e:?}"))
-//     }) else {
-//         return unauthorized_response("Invalid token. Unable to extract the principal from claims");
-//     };
-//     let (mut parts, body) = request.into_parts();
-//     parts.extensions.insert(authorized_principal);
-//     let request = Request::from_parts(parts, body);
-//     next.run(request).await
-// }
-
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
