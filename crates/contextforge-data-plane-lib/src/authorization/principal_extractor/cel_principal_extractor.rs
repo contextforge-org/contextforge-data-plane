@@ -71,7 +71,7 @@ impl CelPrincipalExtractor {
 }
 
 impl PrincipalExtractor for CelPrincipalExtractor {
-    #[instrument(name = "extract", level = "info", skip_all)]
+    #[instrument(name = "principal_extract", level = "info", skip_all)]
     fn extract(
         &self,
         claims: &serde_json::Value,

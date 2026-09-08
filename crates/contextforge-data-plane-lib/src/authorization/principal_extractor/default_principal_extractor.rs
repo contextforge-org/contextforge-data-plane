@@ -6,7 +6,7 @@ use crate::authorization::{AuthorizedPrincipal, PrincipalExtractor};
 pub struct DefaultPrincipalExtractor {}
 
 impl PrincipalExtractor for DefaultPrincipalExtractor {
-    #[instrument(name = "extract", level = "info", skip_all)]
+    #[instrument(name = "principal_extract", level = "info", skip_all)]
     fn extract(
         &self,
         claims: &serde_json::Value,

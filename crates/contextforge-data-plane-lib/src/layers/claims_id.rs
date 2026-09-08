@@ -3,7 +3,6 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use tracing::Instrument;
 
 use crate::{common::ContextForgeDataPlaneAppState, errors::unauthorized_response};
 
@@ -16,9 +15,7 @@ pub async fn claims_layer(
 
     let Some(authorization) = parts.headers.get("Authorization") else { return unauthorized_response("No header") };
 
-    let Some(claims) =
-        state.authorization_service.authorize(authorization).instrument(tracing::info_span!("claims_layer")).await
-    else {
+    let Some(claims) = state.authorization_service.authorize(authorization).await else {
         return unauthorized_response("Invalid token");
     };
 

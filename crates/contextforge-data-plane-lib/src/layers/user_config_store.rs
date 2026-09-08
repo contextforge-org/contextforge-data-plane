@@ -1,7 +1,7 @@
 use axum::{extract::State, middleware::Next, response::Response};
 use contextforge_data_plane_apis::User;
 
-use tracing::{Instrument, debug, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     authorization::AuthorizedPrincipal,
@@ -23,12 +23,7 @@ pub async fn user_config_store_layer(
             "user_config_store_layer - getting user config for principal {principal:?} method = {method} path = {path}"
         );
         let user = User::from(principal);
-        match state
-            .config_store
-            .get_config(&user)
-            .instrument(tracing::info_span!("user_config_store_layer",user=?user))
-            .await
-        {
+        match state.config_store.get_config(&user).await {
             Ok(user_config) => {
                 let virtual_hosts = user_config.virtual_hosts.len();
                 info!(

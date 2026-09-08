@@ -12,7 +12,6 @@ use rmcp::{
     },
 };
 use serde_json::{Map, Value};
-use tracing::Instrument;
 
 use crate::{
     ArgumentsUpdate, GatewayPluginRuntimeHandle, PreHookResult,
@@ -257,7 +256,6 @@ impl GatewayPluginRuntimeHandle {
                     Ok(ArgumentsUpdate::from_modified(request.arguments.as_ref(), arguments))
                 },
             )
-            .instrument(tracing::info_span!("before_get_prompt"))
             .await?;
         Ok(PreHookResult { arguments, state: state.map(PromptHookState) })
     }
@@ -265,7 +263,7 @@ impl GatewayPluginRuntimeHandle {
 
 impl PromptHookState {
     pub async fn after_get_prompt(mut self, response: GetPromptResult) -> Result<GetPromptResult, ErrorData> {
-        self.0.after(response).instrument(tracing::info_span!("after_get_prompt")).await
+        self.0.after(response).await
     }
 }
 

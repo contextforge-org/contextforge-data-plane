@@ -6,7 +6,6 @@ use rmcp::{
     ErrorData,
     model::{ReadResourceResult, ResourceContents},
 };
-use tracing::Instrument;
 
 use crate::{
     GatewayPluginRuntimeHandle,
@@ -117,7 +116,7 @@ impl ResourceHookState {
 
     pub async fn after_read_resource(self, response: ReadResourceResult) -> Result<ReadResourceResult, ErrorData> {
         match self.call {
-            Some(mut call) => call.after(response).instrument(tracing::info_span!("before_read_resource")).await,
+            Some(mut call) => call.after(response).await,
             None => Ok(response),
         }
     }
@@ -129,7 +128,7 @@ impl GatewayPluginRuntimeHandle {
             .current()?
             .before(
                 Operation::Resource,
-                "",
+                resource_uri,
                 |id| resource_request_payload(resource_uri, id),
                 |payload, _| {
                     let [ContentPart::ResourceRef { content }] = payload.message.content.as_slice() else {
@@ -138,7 +137,6 @@ impl GatewayPluginRuntimeHandle {
                     Ok(Some(content.uri.clone()))
                 },
             )
-            .instrument(tracing::info_span!("before_read_resource"))
             .await?;
         Ok(ResourceHookState { rewritten_uri, call })
     }

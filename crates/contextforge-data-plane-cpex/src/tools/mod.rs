@@ -8,7 +8,6 @@ use rmcp::{
 };
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
-use tracing::Instrument;
 
 use crate::{
     ArgumentsUpdate, GatewayPluginRuntimeHandle, PreHookResult,
@@ -128,7 +127,6 @@ impl GatewayPluginRuntimeHandle {
                     Ok(ArgumentsUpdate::from_modified(request.arguments.as_ref(), arguments))
                 },
             )
-            .instrument(tracing::info_span!("before_tool_call"))
             .await?;
         Ok(PreHookResult { arguments, state: state.map(|state| ToolHookState(Arc::new(Mutex::new(state)))) })
     }
@@ -136,7 +134,7 @@ impl GatewayPluginRuntimeHandle {
 
 impl ToolHookState {
     pub async fn after_tool_call(self, response: CallToolResult) -> Result<CallToolResult, ErrorData> {
-        self.0.lock().await.after(response).instrument(tracing::info_span!("after_tool_call")).await
+        self.0.lock().await.after(response).await
     }
 
     /// Returns `None` when a plugin denies a progress or logging notification.
