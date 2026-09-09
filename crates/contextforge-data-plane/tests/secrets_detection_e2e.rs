@@ -6,7 +6,7 @@
 use std::{
     collections::HashMap,
     fs,
-    net::TcpStream as StdTcpStream,
+    net::{TcpListener as StdTcpListener, TcpStream as StdTcpStream},
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
@@ -241,7 +241,7 @@ async fn start_environment(backend: RunningBackend, plugin_config: Value) -> E2e
     write_redis_config(redis.port(), &backend).await;
     write_runtime_plugin_config(redis.port(), plugin_config).await;
 
-    let gateway_port = openport::pick_random_unused_port().expect("gateway port");
+    let gateway_port = unused_local_port();
     let mut gateway = start_gateway_process(gateway_port, redis.port());
     wait_for_port(gateway_port, &mut gateway).await;
 
@@ -253,8 +253,12 @@ async fn start_environment(backend: RunningBackend, plugin_config: Value) -> E2e
     }
 }
 
+fn unused_local_port() -> u16 {
+    StdTcpListener::bind(("127.0.0.1", 0)).expect("bind temporary listener").local_addr().expect("local address").port()
+}
+
 async fn start_redis() -> ChildProcess {
-    let port = openport::pick_random_unused_port().expect("redis port");
+    let port = unused_local_port();
     let temp_dir = std::env::temp_dir().join(format!("contextforge-data-plane-redis-{}-{port}", std::process::id()));
     fs::create_dir_all(&temp_dir).expect("redis temp dir is created");
 

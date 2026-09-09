@@ -7,9 +7,9 @@ use rmcp::{
         CallToolRequestParams, CallToolResult, ClientRequest, InitializeRequestParams, ProgressNotificationParam,
         ProgressToken, Request, ServerResult,
     },
-    serde::{Serialize, de::DeserializeOwned},
     service::{NotificationContext, PeerRequestOptions, RequestHandle, ServiceError},
 };
+use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};

@@ -24,7 +24,7 @@ tokio.workspace = true
 tokio-util = "0.7"
 axum.workspace = true
 axum-otel-metrics = "0.14"
-tower-http = { version = "0.7.0", features = ["full"] }
+tower-http = { version = "0.7.1", features = ["cors", "trace"] }
 tower = "0.5.3"
 http.workspace = true
 futures = { version = "0.3", features = ["std", "alloc"] }
@@ -38,27 +38,29 @@ base64.workspace = true
 reqwest.workspace = true
 uuid.workspace = true
 lru_time_cache = "0.11.11"
-hyper-util = "0.1.20"
-hyper = "1.4.0"
+hyper-util = { version = "0.1.20", features = ["server-auto", "tokio"] }
+hyper = "1.11.1"
 rustls.workspace = true
-rustls-pki-types = { version = "1.14.1", features = ["std", "alloc"] }
-tokio-rustls = "0.26.4"
+rustls-pki-types = { version = "1.15.1", features = ["std", "alloc"] }
+tokio-rustls = "0.26.5"
 typed-builder = "0.23.2"
 url = { workspace = true, features = ["serde"] }
-cel = "0.14.4"
+cel = "0.14.5"
 
 
 
 [features]
 default = []
-with_tools = []
+with_tools = ["axum/json", "axum/query"]
 
 
 
 [dev-dependencies]
+axum = { workspace = true, features = ["json"] }
 opentelemetry_sdk.workspace = true
 cpex.workspace = true
-test-log = "0.2.20"
+rmcp = { workspace = true, features = ["macros"] }
+test-log = "0.2.21"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 
 

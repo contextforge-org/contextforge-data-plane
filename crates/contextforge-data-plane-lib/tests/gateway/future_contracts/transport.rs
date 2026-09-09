@@ -31,7 +31,7 @@ async fn plaintext_lists_prefixed_backend_tools() -> Result<()> {
 #[test_log::test]
 #[ignore = "blocked on control-plane TLS publication and federated list-tools support"]
 async fn tls_lists_prefixed_backend_tools() -> Result<()> {
-    let provider = crypto::ring::default_provider();
+    let provider = crypto::aws_lc_rs::default_provider();
     _ = provider.install_default();
     let fixture = start_tls_counter_gateway(TEST_USER_ID).await?;
 
