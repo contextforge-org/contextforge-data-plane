@@ -20,7 +20,7 @@ use tracing::{debug, error, info};
 static GLOBAL: Jemalloc = Jemalloc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let provider = crypto::ring::default_provider();
+    let provider = crypto::aws_lc_rs::default_provider();
     _ = provider.install_default();
 
     let config = Config::parse();

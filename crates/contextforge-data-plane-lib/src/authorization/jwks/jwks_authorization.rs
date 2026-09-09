@@ -238,7 +238,7 @@ mod test {
     #[test_log::test]
     async fn claim_test_valid_hmac() {
         CRYPTO.call_once(|| {
-            _ = rustls::crypto::ring::default_provider().install_default();
+            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
 
         async fn handle(_: HeaderMap) -> Response {
@@ -274,7 +274,7 @@ mod test {
     #[allow(clippy::items_after_statements)]
     async fn claim_test_missing_scopes_is_allowed() {
         CRYPTO.call_once(|| {
-            _ = rustls::crypto::ring::default_provider().install_default();
+            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
 
         async fn handle(_: HeaderMap) -> Response {
@@ -311,7 +311,7 @@ mod test {
     #[allow(clippy::items_after_statements)]
     async fn claim_test_missing_token_use_and_full_name_is_allowed() {
         CRYPTO.call_once(|| {
-            _ = rustls::crypto::ring::default_provider().install_default();
+            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
         let user_id = "11111111-1111-1111-1111-111111111111".to_owned();
 
@@ -361,7 +361,7 @@ mod test {
     #[allow(clippy::items_after_statements)]
     async fn claim_test_expired_token() {
         CRYPTO.call_once(|| {
-            _ = rustls::crypto::ring::default_provider().install_default();
+            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
 
         async fn handle(_: HeaderMap) -> Response {
