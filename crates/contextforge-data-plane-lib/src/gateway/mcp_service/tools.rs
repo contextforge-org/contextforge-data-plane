@@ -5,7 +5,7 @@ use rmcp::{
     model::{CallToolRequestParams, CallToolResponse, ErrorCode, ProtocolVersion},
     service::RequestContext,
 };
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 
 use super::McpService;
 use crate::gateway::{
@@ -14,6 +14,7 @@ use crate::gateway::{
 };
 use crate::mcp_standard_headers;
 
+#[instrument(name = "call_tool", level = "info", skip_all)]
 pub(super) async fn call_tool(
     mcp_service: &McpService,
     request: CallToolRequestParams,

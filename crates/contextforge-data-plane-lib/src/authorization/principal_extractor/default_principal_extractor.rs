@@ -1,9 +1,12 @@
+use tracing::instrument;
+
 use crate::authorization::{AuthorizedPrincipal, PrincipalExtractor};
 
 #[derive(Debug, Clone)]
 pub struct DefaultPrincipalExtractor {}
 
 impl PrincipalExtractor for DefaultPrincipalExtractor {
+    #[instrument(name = "principal_extract", level = "info", skip_all)]
     fn extract(
         &self,
         claims: &serde_json::Value,

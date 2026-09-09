@@ -6,6 +6,7 @@ use std::fmt;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tracing::instrument;
 use url::Url;
 
 const JWKS_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -50,6 +51,7 @@ impl fmt::Debug for JwtAuthorizationService {
 
 #[async_trait]
 impl AuthorizationService for JwtAuthorizationService {
+    #[instrument(name = "jwt_authorization_service", level = "info", skip_all)]
     async fn authorize(&self, authorization_token: &http::HeaderValue) -> Option<AuthorizationClaims> {
         let token = authorization_token.as_bytes().strip_prefix(b"Bearer ")?;
         let token = str::from_utf8(token).ok()?;

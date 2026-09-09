@@ -4,7 +4,7 @@ use rmcp::{
     model::{ErrorCode, GetPromptRequestParams, GetPromptResponse},
     service::RequestContext,
 };
-use tracing::info;
+use tracing::{info, instrument};
 
 use super::McpService;
 use crate::gateway::{
@@ -12,6 +12,7 @@ use crate::gateway::{
     routing_error::backend_forward_error,
 };
 
+#[instrument(name = "get_prompt", level = "info", skip_all)]
 pub(super) async fn get_prompt(
     mcp_service: &McpService,
     request: GetPromptRequestParams,

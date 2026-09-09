@@ -1,5 +1,5 @@
 mod logging;
-mod runtime;
+
 #[cfg(feature = "test-plugins")]
 mod test_plugins;
 
@@ -13,19 +13,19 @@ use contextforge_data_plane_lib::{
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rustls::crypto;
 use tikv_jemallocator::Jemalloc;
-use tracing::info;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info};
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let provider = crypto::ring::default_provider();
     _ = provider.install_default();
 
     let config = Config::parse();
     let _guard = logging::init_tracing_logging(&config)?;
     info!("starting contextforge-data-plane {config:?}");
-
-    let runtime = runtime::Runtime::from(&config);
 
     let plugin_registry = if config.runtime_plugins_enabled.unwrap_or(false) {
         Some(Arc::new(plugin_runtime_from_config(&config)?))
@@ -44,7 +44,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .with_authorization_service(authorization_service)
         .build();
 
-    runtime.execute(gateway, plugin_registry)
+    let _cpex_watcher = initialize_cpex_runtime(plugin_registry).await?;
+    run_gateway(gateway).await
 }
 
 fn plugin_runtime_from_config(
@@ -73,4 +74,36 @@ fn register_builtin_factories(
         )?;
     }
     Ok(plugin_runtime)
+}
+
+pub async fn initialize_cpex_runtime(
+    cpex_runtime: Option<Arc<CpexRuntimeRegistry>>,
+) -> contextforge_data_plane_lib::Result<Option<JoinHandle<()>>> {
+    let Some(cpex_runtime) = cpex_runtime else {
+        return Ok(None);
+    };
+    match cpex_runtime.initialize().await {
+        Ok(Some(handle)) => {
+            debug!("CPEX Plugins initialization successful");
+            Ok(Some(handle))
+        },
+        Ok(None) => {
+            debug!("CPEX Plugins initialization skipped");
+            Ok(None)
+        },
+        Err(e) => {
+            error!("CPEX Plugins initialization failed {e:?}");
+            Err(e)
+        },
+    }
+}
+
+pub async fn run_gateway(gateway: Gateway) -> contextforge_data_plane_lib::Result<()> {
+    let res = gateway.run_gateway().await;
+    if res.is_ok() {
+        debug!("Gateway process terminated");
+    } else {
+        error!("Gateway process terminated {res:?}");
+    }
+    Ok(())
 }

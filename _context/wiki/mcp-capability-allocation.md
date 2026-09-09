@@ -14,109 +14,58 @@ names.
 
 ## Vision and Constraints
 
-- ContextForge supports MCP `2026-07-28` and `2025-11-25` over Streamable HTTP
-  on both the client-facing and backend-facing sides of the ContextForge
-  external dataplane.
-- Same-version client/backend paths are supported directly. Cross-version
-  `2026-07-28` → `2025-11-25` and `2025-11-25` → `2026-07-28` adaptation is
-  best effort.
-- All external-dataplane request/response handling is stateless for both
-  versions. The target request path does not depend on an MCP session, session
-  affinity, or a retained backend transport.
-- `initialize` remains supported for compatibility, but it is a stateless
-  request: the external dataplane generates its response from effective
-  configuration and does not use it to establish state required by later
-  requests.
-- Legacy SSE transport is not part of the external-dataplane target.
-- Fan-out and other one-to-many MCP work is limited to the control plane. The
-  built-in and external dataplanes generate discovery, capability, and list
-  responses from control-plane-authored effective configuration.
-- Effective configuration flows one way from the control plane to the built-in
-  and external dataplanes through externally shared state. A process-local
-  cache may speed reads but is never the source of truth.
-- MCP subscriptions and notifications remain Phase 4 work.
+- The external dataplane targets MCP `2026-07-28` over Streamable HTTP, using
+  `server/discover` and per-request client metadata. Older protocol versions,
+  legacy initialization/session flows, and SSE remain on Python routes.
+- External request handling must not depend on session affinity or a retained
+  backend transport. Existing legacy code is migration state, not a target to expand.
+- Fan-out belongs in control-plane reconciliation. The proposed dataplanes
+  generate discovery, capability, and list responses from published effective
+  configuration, rather than querying every backend during a client request.
+- Effective configuration flows from the control plane to shared storage.
+  Process-local caches accelerate reads but do not own policy.
+- Subscription and notification delivery beyond current in-flight tool progress
+  remains Phase 4 work.
 
-## Stateless Protocol Compatibility
+## Protocol Scope and Implementation Checkpoint
 
-[IBM/mcp-context-forge issue #6327](https://github.com/IBM/mcp-context-forge/issues/6327)
-tracks the first targeted-operation slice for `tools/call`. The issue calls the
-incoming/client-facing side “upstream” and the selected backend-facing side
-“downstream”; this wiki uses the explicit names below.
+Earlier planning considered a four-way modern/legacy compatibility matrix.
+That is not this repository's current contract: new work targets modern MCP,
+and legacy clients stay on control-plane/built-in routes. Historical targeted
+routing work is linked from
+[IBM/mcp-context-forge #6327](https://github.com/IBM/mcp-context-forge/issues/6327).
+Do not treat that historical issue as authorization to expand Rust compatibility.
 
-| Incoming client | Selected backend | Target behavior |
-| --- | --- | --- |
-| `2026-07-28` | `2026-07-28` | Supported directly as one stateless request. |
-| `2026-07-28` | `2025-11-25` | Best-effort protocol adaptation within one stateless request. |
-| `2025-11-25` | `2026-07-28` | Best-effort protocol adaptation within one stateless request. |
-| `2025-11-25` | `2025-11-25` | Supported directly as one stateless request. |
-
-For every row, the external dataplane authenticates and authorizes the request, reads
-the principal-bound effective configuration, validates that the requested
-object is visible and permitted, resolves exactly one backend, adapts the
-protocol when necessary, and closes the request-scoped backend connection after
-the response. A client may call `initialize`, but later operations neither
-require nor reuse state created by it.
-
-“Best effort” never permits hidden session state. If a semantic difference or
-backend requirement cannot be handled within the current request, the
-external dataplane returns an explicit error instead of creating affinity or
-retaining a backend transport for a later request.
-
-For the initial `tools/call` slice, issue #6327 assumes that the selected
-backend needs neither application authentication nor mTLS and that its server
-certificate chains to the system CA. Those are issue-scope assumptions, not a
-change to the external dataplane's broader transport-security model.
+The current implementation already routes `tools/call`, `resources/read`, and
+`prompts/get` through explicit per-user object maps, with request-scoped backend
+connections and CPEX hooks. It rejects aggregate lists, completion, and
+subscriptions. `server/discover` currently returns RMCP's local response, not
+an effective catalog compiled for the principal. Tenant claims are required,
+but Redis/cache keys contain only user ID; token scopes and compiled RBAC are
+not enforced. The richer snapshots, authorization, and list responses below
+are proposed work, not completed phases.
 
 ## Target End State
 
-The front door separates management traffic from MCP traffic and chooses the
-built-in or external dataplane by deployment route and session model, not only
-by protocol version. The built-in dataplane can handle either supported version in stateful
-or stateless mode. The external dataplane can handle either supported version
-only in stateless mode. PostgreSQL remains the durable management store; the
-shared runtime store carries compiled configuration to both dataplanes.
+The front door separates management and MCP routes. It may select the built-in
+or external dataplane for modern requests; older clients and stateful/legacy
+flows stay on the Python side. The external route handles modern independent
+requests. PostgreSQL remains the durable management store, while shared runtime
+storage carries proposed compiled configuration to both dataplanes.
 
-```mermaid
-flowchart TB
-    subgraph Clients[Traffic]
-        direction LR
-        AdminClient([Admin or User])
-        CompatClient([MCP 2025-11-25 Client])
-        ModernClient([MCP 2026-07-28 Client])
-    end
-
-    FrontDoor[Load Balancer and Router]
-
-    subgraph ContextForge[ContextForge 2.0]
-        direction LR
-        subgraph PythonRepo[IBM mcp-context-forge Python Repository]
-            direction TB
-            Control[ContextForge Control Plane]
-            Builtin[ContextForge Built-In Dataplane]
-        end
-        External[ContextForge External Dataplane - Rust]
-    end
-
-    Postgres[(PostgreSQL Management State)]
-    RuntimeStore[(Shared Effective Configuration)]
-    Upstreams[MCP 2026-07-28 and 2025-11-25 Servers]
-
-    AdminClient -->|Management API| FrontDoor
-    CompatClient -->|Streamable HTTP MCP 2025-11-25| FrontDoor
-    ModernClient -->|Streamable HTTP MCP 2026-07-28| FrontDoor
-
-    FrontDoor -->|Management routes| Control
-    FrontDoor -->|Stateful or built-in MCP routes| Builtin
-    FrontDoor -->|Stateless external MCP routes| External
-
-    Control -->|Persist administrative state| Postgres
-    Control -->|Publish effective configuration| RuntimeStore
-    RuntimeStore -->|Read shared configuration| Builtin
-    RuntimeStore -->|Read-only configuration| External
-
-    Control -->|Discover catalogs and poll liveness| Upstreams
-    Builtin -->|Stateful or stateless MCP calls| Upstreams
-    External -->|Stateless targeted MCP calls| Upstreams
+```text
+client -> front door -> management -> control plane -> PostgreSQL
+                    |                      |
+                    |                      +-> compile shared effective config
+                    |                      +-> reconcile modern/legacy backends
+                    |
+                    +-> Python MCP route -> built-in dataplane
+                    |                         |-> read effective config
+                    |                         +-> modern/legacy backend calls
+                    |
+                    +-> modern external route -> Rust external dataplane
+                                                  |-> read effective config
+                                                  +-> one modern backend call
 ```
 
 Redis is the current external-dataplane configuration store and the preferred
@@ -129,13 +78,13 @@ or affinity design; stateless behavior must not rely on process memory.
 
 | Component | Target responsibility |
 | --- | --- |
-| Front door | Route management APIs to the ContextForge control plane. Route MCP to the built-in dataplane when the built-in route or stateful behavior is required, and to the external dataplane when the configured stateless external route is selected. Protocol version alone does not identify the component. |
+| Front door | Route management to the control plane and legacy/stateful MCP to Python routes. Select either dataplane for compatible modern traffic by deployment route. |
 | ContextForge control plane | Manage the virtual-server lifecycle and upstream assignments; connect to heterogeneous upstreams; retrieve and page through capabilities, tools, resources, prompts, completions, and other catalogs; normalize and persist them; let administrators select exposed objects and rules; compile effective runtime configuration; poll upstream liveness and changes. |
 | PostgreSQL | Persist administrative source data such as virtual servers, upstream definitions, normalized catalogs, selections, and policies. It is not on the external-dataplane request path. |
 | Configuration synchronization | Publish effective configuration one way from the control plane to externally shared state. The built-in and external dataplanes should consume the same shape where practical. |
 | ContextForge built-in dataplane | Handle `2026-07-28` and `2025-11-25` MCP requests in Python, including stateful and stateless behavior. It is the MCP request path shipped in the same repository as the control plane, not the control plane itself. |
-| ContextForge external dataplane | Handle `2026-07-28` and `2025-11-25` Streamable HTTP requests statelessly in Rust. Read effective configuration, serve aggregate and `initialize` responses locally, and route a targeted method to exactly one selected backend. Cross-version adaptation is best effort. It does not own IAM, UI, management APIs, or durable metrics storage. |
-| Backend MCP servers | May use `2026-07-28` or `2025-11-25`, independently of the incoming client version. Connections and any required negotiation are request-scoped and leave no reusable session; the architecture does not require backend session affinity. |
+| ContextForge external dataplane | Handle modern `2026-07-28` Streamable HTTP requests independently. In the proposed end state, read effective configuration, serve discovery and aggregates locally, and route targeted operations to one backend. It does not own IAM, UI, management APIs, or metrics storage. |
+| Backend MCP servers | External routing targets modern backends with request-scoped connections. The control plane can reconcile heterogeneous catalogs, and Python routes own legacy protocol handling. |
 
 ## Administrative State and Effective Configuration
 
@@ -177,7 +126,8 @@ authorization context.
 - The exact tenant/team claim mapping and token-scope-to-RBAC rules are a
   cross-repository contract that the control plane, publisher, schemas,
   external dataplane, and integration tests must define together. The current
-  coarse `sub`-only implementation is not the Phase 3 target.
+  user-ID-keyed routing maps, without tenant partitioning or scope/RBAC
+  enforcement, are not the Phase 3 target.
 
 ## MCP Work Allocation
 
@@ -185,9 +135,9 @@ authorization context.
 | --- | --- |
 | Virtual-server creation and upstream assignment | Control plane persists management state and connects to assigned upstreams. |
 | Upstream discovery, initialization where required, catalog pagination, capability aggregation, filtering, and liveness polling | Control plane only; this is the intentional fan-out boundary. |
-| `server/discover`, `initialize`, and effective capabilities | After per-request authorization, the built-in or external dataplane generates the response from principal-bound effective configuration. The built-in dataplane may support a stateful flow; the external dataplane treats `initialize` as stateless compatibility and creates no state required by later requests. |
+| `server/discover` and effective capabilities | After per-request authorization, generate the modern response from principal-bound effective configuration. Legacy `initialize` stays on Python routes. |
 | `tools/list`, `resources/list`, `prompts/list`, resource-template listing, and similar aggregate methods | After method-scope and compiled-RBAC enforcement, the built-in or external dataplane generates the visible response from principal-bound effective configuration with no live upstream fan-out. |
-| `tools/call`, `resources/read`, `prompts/get`, completion, and similar targeted methods | The built-in or external dataplane resolves the effective entry under the trusted authorization key, applies default-deny scope and object policy, and calls exactly one selected backend only when authorized. The external dataplane adapts protocol versions when necessary and leaves no reusable session; the built-in dataplane may use its stateful or stateless execution model. |
+| `tools/call`, `resources/read`, `prompts/get`, completion, and similar targeted methods | The built-in or external dataplane resolves the effective entry under the trusted authorization key, applies default-deny scope and object policy, and calls exactly one selected backend only when authorized. The external dataplane handles modern requests without a reusable session; the built-in dataplane owns legacy/stateful execution. |
 | Plugins for trusted aggregate responses | Prefer policy compiled by the control plane; avoid mandatory per-request plugin calls for a response already produced from trusted effective configuration. |
 | Plugins for targeted calls | May run on the external-dataplane request path when request or response inspection is required. Exact hook allocation remains an implementation decision. |
 | Subscriptions, server notifications, and downstream list-change notifications | Deferred to Phase 4 because their state and delivery model do not fit the request/response simplification. |
@@ -197,191 +147,84 @@ authorization context.
 | Phase | Scope |
 | --- | --- |
 | **1. Separate control-plane and built-in-dataplane responsibilities** | Establish a clear boundary between the ContextForge control plane and built-in dataplane inside the Python repository. The control plane writes effective configuration per user, team, or other principal to shared state; the built-in dataplane reads it and handles MCP requests. |
-| **2. Route targeted calls through the external dataplane** | Make the built-in and external dataplanes follow the same configuration-driven contract. Send selected targeted operations such as `tools/call`, `resources/read`, `prompts/get`, and completion to the external dataplane. For each operation, support both same-version `2026-07-28`/`2025-11-25` paths and attempt both cross-version paths on a best-effort basis, always without reusable session state. The `tools/call` slice is tracked by [#6327](https://github.com/IBM/mcp-context-forge/issues/6327). |
-| **3. Route all stateless request/response MCP methods through the external dataplane** | Serve discovery, stateless `initialize`, capabilities, aggregate lists, and targeted calls for both supported protocol versions from the external dataplane. Aggregate responses come from effective configuration; targeted calls reach exactly one backend. The built-in dataplane continues to support both stateful and stateless behavior. |
+| **2. Route targeted calls through the external dataplane** | Use published object routes for modern calls. Tools, resources, and prompts already have request-scoped routing; completion remains unimplemented. Align the publisher and both consumers on the configuration contract. |
+| **3. Serve modern request/response methods from effective configuration** | Add principal-bound discovery, capabilities, aggregate lists, and scope/RBAC enforcement for `2026-07-28`. Aggregate responses use compiled configuration; targeted calls reach one backend. This does not add legacy initialization or compatibility to Rust. |
 | **4. Implement subscriptions and notifications** | Add the state, routing, and delivery model for upstream subscriptions, resource notifications, and list-change notifications after the request/response architecture is complete. |
 
 ## Phase 3 Reference Flows
 
 The examples below use tools, but the same ownership applies to resources,
 prompts, completions, and other aggregate or targeted request/response methods.
-“Supported MCP client” and “supported MCP server” mean either `2026-07-28` or
-`2025-11-25`; when the two sides differ, adaptation is best effort.
+External clients and selected external backends in these flows use `2026-07-28`.
+The control plane may also manage legacy servers for Python routes.
 
 ### 1. Create a Virtual Server and Select Capabilities
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant UI as Admin UI or API
-    participant CP as ContextForge Control Plane
-    participant DB as Control Plane DB
-    participant MCP1 as MCP 2026-07-28 Server
-    participant MCP2 as MCP 2025-11-25 Server
-    participant Store as Shared Config Store (Redis)
-    participant DP as ContextForge External Dataplane
+```text
+user -> admin UI/API -> control plane -> persist virtual server/associations
+                            |
+                            +-> discover both modern backend catalogs
+                            +-> exhaust pagination and reconcile catalogs
+                            +-> display available entries (inc, sum, dec, diff)
+user -> select inc and sum -> persist selected tools and policy
+                            |
+                            +-> compile by tenant, principal, and virtual host
+                            +-> atomically publish snapshot revision N
+shared store -> external dataplane -> load/cache revision N
 
-    User->>UI: Create virtual server
-    UI->>CP: Submit virtual server
-    CP->>DB: Store virtual server
-
-    User->>UI: Assign MCP Server 1 and MCP Server 2
-    UI->>CP: Update backend associations
-    CP->>DB: Store backend associations
-
-    par Inspect 2026-07-28 backend
-        CP->>MCP1: Discover capabilities and retrieve catalogs
-        MCP1-->>CP: Capabilities and catalog
-    and Inspect 2025-11-25 backend
-        CP->>MCP2: Initialize or discover and retrieve catalogs
-        MCP2-->>CP: Capabilities and catalog
-    end
-
-    CP->>DB: Reconcile normalized catalog
-    User->>UI: View available catalog entries
-    UI->>CP: Request reconciled catalog
-    CP->>DB: Read catalog
-    DB-->>CP: inc, sum, dec, diff
-    CP-->>UI: Display available catalog entries
-
-    User->>UI: Allow inc and sum
-    UI->>CP: Update virtual server policy
-    CP->>DB: Store selected tools and policy
-
-    CP->>CP: Compile snapshot by tenant, principal and vhost
-    CP->>Store: Atomically publish revision N
-    Store-->>DP: Configuration revision available
-    DP->>Store: Load revision N
-    DP->>DP: Replace local cache atomically
-
-    Note over CP,MCP2: Control Plane handles upstream protocol and pagination
-    Note over CP,DP: Effective configuration flows one way from CP to DP
-    Note over CP,DP: Snapshot carries compiled scopes, RBAC and visible objects
+The proposed snapshot contains visible objects, compiled scopes, and RBAC.
+Only the control plane performs catalog fan-out and reconciliation.
 ```
 
-### 2. Initialize or Discover the Server and List Tools
+### 2. Discover the Server and List Tools
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client as Supported MCP Client
-    participant Ingress
-    participant DP as ContextForge External Dataplane
-    participant Cache as Local Cache
-    participant Store as Shared Config Store (Redis)
+```text
+client -> server/discover with per-request metadata -> ingress -> dataplane
+  dataplane: verify JWT, metadata, and route; derive trusted authorization key
+  cache hit: use snapshot revision N under that key
+  cache miss/expiry: read shared store and cache the authorized snapshot
+  enforce discovery scope and compiled RBAC
+  allow: return identity and visible capabilities from the snapshot
+  deny/missing: return an error without catalog or backend details
 
-    Client->>Ingress: initialize or server/discover
-    Ingress->>DP: Forward supported MCP request
-    DP->>DP: Verify JWT, metadata and server route
-    DP->>DP: Derive authorization key from trusted context
-    DP->>Cache: Get snapshot by authorization key
+client -> tools/list as an independent request -> ingress -> dataplane
+  reverify identity and derive authorization key
+  enforce tools/list scope and compiled RBAC
+  allow: return visible tools (inc, sum) from the snapshot
+  deny/missing: return an error without catalog details
 
-    alt Snapshot available
-        Cache-->>DP: Snapshot revision N
-    else Snapshot missing or expired
-        Cache-->>DP: Cache miss
-        DP->>Store: Read by authorization key
-        Store-->>DP: Snapshot revision N or not found
-        opt Authorized snapshot returned
-            DP->>Cache: Store under authorization key
-        end
-    end
-
-    DP->>DP: Enforce discovery scope and compiled RBAC
-    alt Snapshot mapped and authorized
-        DP-->>Client: Version-appropriate identity and visible capabilities
-    else Missing, unmapped or denied
-        DP-->>Client: Authorization error without catalog details
-    end
-
-    Client->>Ingress: tools/list as independent request
-    Ingress->>DP: Forward supported MCP request
-    DP->>DP: Reverify and derive authorization key
-    DP->>DP: Enforce tools/list scope and compiled RBAC
-    alt Snapshot mapped and authorized
-        DP->>Cache: Read visible tools by authorization key
-        Cache-->>DP: inc and sum
-        DP-->>Client: tools/list result
-    else Missing, unmapped or denied
-        DP-->>Client: Authorization error without catalog details
-    end
-
-    Note over DP,Store: The shared store distributes compiled state
-    Note over DP: No live upstream call for discovery or aggregate lists
-    Note over Client,DP: initialize does not create required session state
-    Note over Client,DP: Client-supplied identity or routing metadata is untrusted
+Neither operation calls a live backend. Client-supplied identity or routing
+metadata cannot override the trusted authorization context.
 ```
 
 ### 3. Call a Tool
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client as Supported MCP Client
-    participant Ingress
-    participant DP as ContextForge External Dataplane
-    participant Cache as Local Cache
-    participant CPEX as Policy and CPEX
-    participant MCP as Selected Supported MCP Server
+```text
+client -> tools/call inc with per-request metadata -> ingress -> dataplane
+  verify JWT, metadata, and route; derive trusted authorization key
+  resolve inc in the principal-bound snapshot
+  enforce tools/call scope and compiled RBAC
+    missing/denied: return an error; make no upstream call
+    allowed:
+      pre-call CPEX policy -> allow/modify arguments
+      build request-scoped modern client -> call one selected backend
+      backend result -> close connection -> post-call CPEX policy
+      allow/modify result -> return MCP result
 
-    Client->>Ingress: tools/call name inc
-    Ingress->>DP: Forward supported MCP request
-    DP->>DP: Verify JWT, metadata and server route
-    DP->>DP: Derive authorization key from trusted context
-    DP->>Cache: Resolve inc under authorization key
-    Cache-->>DP: Backend mapping, protocol version and policy or missing
-    DP->>DP: Enforce tools/call scope and compiled RBAC
-
-    alt Tool mapped and authorized
-        DP->>CPEX: Run pre-call policy
-        CPEX-->>DP: Allow or modify request
-        DP->>DP: Adapt client protocol to backend protocol
-        opt Backend negotiation is required
-            DP->>MCP: Request-scoped initialize
-            MCP-->>DP: Initialize result
-        end
-        DP->>MCP: tools/call name inc
-        MCP-->>DP: Tool result
-        DP->>MCP: Close request-scoped connection
-        DP->>CPEX: Run post-call policy
-        CPEX-->>DP: Allow or modify result
-        DP-->>Client: Return version-appropriate tool result
-    else Missing, unmapped or denied
-        DP-->>Client: Authorization error with no upstream call
-    end
-
-    Note over DP,MCP: Exactly one backend is called
-    Note over DP,MCP: Client and backend versions are independently 2026-07-28 or 2025-11-25
-    Note over DP,MCP: No durable backend MCP session is required
-    Note over DP: Control Plane, DB and Redis are not on this result path
-    Note over Client,DP: Client-supplied identity or backend selection is untrusted
+Client and backend use MCP 2026-07-28. No durable backend session is required.
+After route resolution, results do not pass through the control plane or Redis.
+A pre/post policy denial ends the corresponding path with an MCP error.
 ```
 
 ### 4. Reconcile an Upstream Catalog Change
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant MCP as Supported MCP Server
-    participant CP as Control Plane Reconciler
-    participant DB as Control Plane DB
-    participant Store as Shared Config Store (Redis)
-    participant DP as ContextForge External Dataplane
-    participant Client as Supported MCP Client
+```text
+control-plane reconciler -> poll backend liveness, discovery, and catalogs
+  -> reconcile administrative catalog changes
+  -> compile affected snapshots
+  -> atomically publish revision N+1 to shared storage
+external dataplane -> load revision N+1 -> replace local cached snapshot
+client -> tools/list -> receive updated visible catalog from the snapshot
 
-    CP->>MCP: Poll liveness and refresh discovery and lists
-    MCP-->>CP: Updated catalog
-    CP->>DB: Reconcile catalog changes
-    CP->>CP: Recompile affected snapshots
-    CP->>Store: Atomically publish revision N plus 1
-
-    Store-->>DP: Configuration revision available
-    DP->>Store: Load revision N plus 1
-    DP->>DP: Replace local cache atomically
-
-    Client->>DP: tools/list
-    DP-->>Client: Updated list from local snapshot
-
-    Note over DP,Client: Phase 4 owns MCP list-change notifications
+Phase 4 owns downstream MCP list-change notifications.
 ```

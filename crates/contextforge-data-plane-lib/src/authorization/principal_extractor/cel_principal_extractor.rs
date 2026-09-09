@@ -5,7 +5,7 @@ use std::sync::Arc;
 use cel::{Context, Program, objects::Key};
 use serde_json::Value as JsonValue;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use crate::authorization::{AuthorizedPrincipal, PrincipalExtractor};
 
@@ -51,7 +51,7 @@ pub enum CelPrincipalExtractorError {
 ///   "scopes": []
 /// }
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CelPrincipalExtractor {
     program: Arc<Program>,
 }
@@ -71,6 +71,7 @@ impl CelPrincipalExtractor {
 }
 
 impl PrincipalExtractor for CelPrincipalExtractor {
+    #[instrument(name = "principal_extract", level = "info", skip_all)]
     fn extract(
         &self,
         claims: &serde_json::Value,

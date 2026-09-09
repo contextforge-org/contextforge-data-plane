@@ -4,7 +4,7 @@
 
 - **Workspace checks** — code compiles and unit behavior holds.
 - **In-repo integration tests** — MCP routing against mock backends.
-- **`cf-integration` harness** — full control-plane publication and external-dataplane request path end to end.
+- **`cf-integration` harness** — standalone dataplane checks or full control-plane publication and routed requests, depending on the selected lane.
 - **Load and benchmark** — see [Performance](performance.md).
 
 ## Workspace Validation
@@ -13,8 +13,11 @@ CI runs these on every change; run them locally before pushing:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo nextest run --locked --workspace --all-features
+cargo deny check advisories bans licenses
+cargo build --locked -p contextforge-data-plane --features plugins
+cargo bench --no-run
 cargo shear --check-test-targets --deny-warnings --locked
 ```
 
@@ -25,15 +28,15 @@ user-config helpers for local fixtures. The all-features unit test commands
 include it. Production builds and conformance images omit it and must not use
 `--all-features`. The harness owns conformance authentication and Redis setup.
 `/contextforge-rs/health` is available without
-this feature. See [Deployment](deployment.md#production-builds) for production
+this feature. See [Deployment](deployment.md#builds-and-images) for production
 build commands and [Getting Started](getting-started.md#local-cargo-dev-workflow)
 for local testing.
 
 New protocol-sensitive tests target MCP `2026-07-28`, connect through
 `server/discover`, and send the required per-request client metadata. A small
-`compatibility` module retains the active `2025-11-25`/`initialize` cases until
-that production compatibility surface is removed in a dedicated change; do not
-add new behavior to that lane. Every case must remain request-independent, with
+`compatibility` module retains `2025-11-25`/`initialize` migration cases. These
+are not a supported production contract; do not add new behavior to that lane.
+Every case must remain request-independent, with
 no required `Mcp-Session-Id`, session affinity, or retained backend transport.
 SSE remains outside the external-dataplane contract.
 
@@ -83,8 +86,10 @@ repository keeps only the CI invocation, Make targets, and expected findings.
 
 Comment exactly `/conformance` on a pull request to run the **Conformance**
 Actions workflow. Only repository owners, members, and collaborators can start
-it. The workflow acknowledges the command, tests the pull request head commit,
-and reports the final result back to the pull request. CI builds and names the
+it. The workflow sets a pending `conformance` commit status, tests the pull request
+head commit, and updates that status with the result. The `issue_comment`
+workflow itself is read from the default branch, so a PR edit to that workflow
+does not change the command handling until merged. CI builds and names the
 conformance binary artifact using that same head SHA and retains it for 90 days,
 so changes to `main` do not invalidate the artifact. It runs the modern client
 and modern server eras through the external dataplane in standalone mode. This

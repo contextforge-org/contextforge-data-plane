@@ -24,6 +24,12 @@ pub struct McpService {
     plugin_runtime: Option<GatewayPluginRuntimeHandle>,
 }
 
+#[allow(clippy::missing_fields_in_debug)]
+impl std::fmt::Debug for McpService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpService").field("http_client", &self.http_client).finish()
+    }
+}
 #[allow(clippy::unused_async_trait_impl)]
 impl ServerHandler for McpService {
     async fn initialize(

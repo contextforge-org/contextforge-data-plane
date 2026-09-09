@@ -1,264 +1,173 @@
 # Architecture
 
-> This page describes the **current Rust implementation**, including temporary
-> backend fan-out and session behavior. The tentative configuration-driven end
-> state is in
-> [ContextForge 2.0 Target Architecture and Roadmap](mcp-capability-allocation.md).
+This page describes the current Rust implementation. Proposed catalog and
+policy compilation is in the [ContextForge 2.0 roadmap](mcp-capability-allocation.md).
 
 ## Middleware Stack Order
 
-Tower layers execute outside-in. A request reaches MCP handlers with these extensions already set:
+Tower layers execute outside-in:
 
 ```text
 TCP/TLS listener
   -> HttpMetricsLayer
-  -> TraceLayer
+  -> TraceLayer (extract incoming trace context)
   -> /contextforge-rs nested router
-  -> mcp_origin_layer          → validates Origin                 (403 when invalid/disallowed)
+  -> mcp_origin_layer           validates Origin (403)
   -> CORS layer
-  -> mcp_header_limits_layer   → MCP standard header budgets      (431 when exceeded)
-  -> virtual_host_id_layer       → inserts VirtualHostId           (400 on path mismatch)
-  -> claims_layer                → inserts ContextForgeClaims      (401 on bad/missing JWT)
-  -> session_id_layer            → inserts SessionId if present
-  -> user_config_store_layer     → inserts UserConfig              (400 no config, 500 store error)
-  -> virtual_host_config_layer   → rejects unknown vhost           (404 "Server not found")
-  -> /servers/{virtual_host_name}/mcp RMCP service → validates Host, then dispatches MCP
+  -> mcp_header_limits_layer    bounds MCP headers (431)
+  -> virtual_host_id_layer      inserts VirtualHostId from path (400)
+  -> claims_layer               verifies JWT, inserts AuthorizationClaims (401)
+  -> PrincipalExtractorLayer   inserts AuthorizedPrincipal (401)
+  -> user_config_store_layer    loads UserConfig (400 missing, 500 decode/error)
+  -> virtual_host_config_layer checks caller's virtual host (404)
+  -> /servers/{virtual_host_name}/mcp RMCP service
+       Host validation -> HTTP/MCP validation -> method dispatch
 ```
 
-DNS-rebinding validation is split by behavior. `mcp_origin_layer` rejects any
-present Origin that is malformed or not allowlisted; requests without Origin
-continue. RMCP validates the optional Host allowlist at the MCP service
-boundary. See [Security](security.md#mcp-origin-and-host-validation).
-`mcp_header_limits_layer` rejects excessive MCP standard headers before JWT
-validation, config lookup, session creation, backend fanout, or RMCP body
-parsing.
+Origin is checked before authentication. The optional Host allowlist is checked
+at the RMCP boundary, so earlier middleware may return first. MCP header budgets
+apply before JWT verification, configuration reads, and body parsing. See
+[Security](security.md#mcp-origin-and-host-validation).
 
-MCP handlers read typed extensions and never parse paths or Redis keys directly.
-`tools/call` reads the downstream header map from RMCP's request-context
-`Parts` extension for parameter-header validation.
+Health is registered in every build outside the MCP auth/config layers, while
+token, JWKS, and config helpers are compiled only with testing-only `with_tools`.
+Both remain covered by the outer HTTP tracing and metrics layers. MCP handlers
+consume typed extensions; they do not parse Redis keys.
+`tools/call` also reads the HTTP headers from the request-context `Parts`.
 
 ## Pipeline Shape
 
 ```text
-downstream request
-  -> Origin validation → MCP header limits → virtual host extraction → JWT validation → session extraction
-  -> user config lookup → RMCP request validation → MCP handler validation
-  -> request plugin hooks
-  -> backend MCP call (concurrent via join_all for initialize/list)
-
-upstream response
-  -> response plugin hooks → merge/namespace/passthrough
-  -> metrics, tracing, logging → downstream response
+modern MCP request
+  -> header, JWT, and principal checks
+  -> user config and virtual-host check
+  -> published object/backend route
+  -> recognized tool parameter-header validation
+  -> pre-hook
+  -> connect to one backend -> call -> close
+  -> post-hook on the successful response
+  -> MCP response
 ```
 
-```mermaid
-flowchart TD
-    bin["binary\nCLI · logging · runtime"]
-    lib["lib\nrouting · middleware\nsessions · transports"]
-    apis["apis\nUserConfig · VirtualHost\nBackendMCPGateway"]
-    cpex["cpex\nCPEX hook factories"]
-    bin --> lib
-    lib --> apis
-    lib --> cpex
-```
+Tools, resources, and prompts use explicit routing tables. There is no catalog
+fan-out or prefix splitting. Resource pre-hooks may rewrite a URI only to an
+unambiguous target published in the caller's virtual host.
 
-**Hot-path pipeline** (each stage must complete before the next):
+For `tools/call`, a published input schema enables local `Mcp-Param-*`
+validation before plugins and backend I/O. The gateway does not fetch
+`tools/list`. Without a schema, parameter headers are forwarded without local
+validation. A plugin that changes an annotated argument does not change the
+original parameter header; the backend may reject a resulting mismatch.
 
-```mermaid
-flowchart TD
-    D(["downstream request"])
-    A["virtual host · JWT\nsession extract"]
-    C["user config lookup\nRMCP · MCP validate"]
-    P1["request plugins\ntool_pre_invoke"]
-    B["backend MCP call\njoin_all for init/list"]
-    P2["response plugins\ntool_post_invoke"]
-    M["merge · namespace\npassthrough"]
-    T["metrics · tracing · logging"]
-    U(["downstream response"])
-    D --> A --> C --> P1 --> B --> P2 --> M --> T --> U
-```
+Backend cleanup occurs before post-hooks. A cleanup failure is logged and does
+not replace the operation's result. Error and cancellation paths do not turn
+into successful response hooks. See [Routing](routing.md) and
+[Failure Modes](failure-modes.md) for method-specific details.
 
+## Module Boundaries
 
-RMCP enforces its configured request-body cap and validates modern standard
-headers before dispatch. The `tools/call` handler then resolves the request's
-backend and original tool name. When `UserConfig` contains that tool's input
-schema, it validates recognized `Mcp-Param-*` headers against the request body;
-it does not call backend `tools/list`. Without a published schema, parameter
-headers are unrecognized and forwarded without local validation.
-Published annotations are validated for MCP token, uniqueness, primitive type,
-and properties-only reachability constraints. Nested annotations read the exact
-argument path. Present non-null values require a matching header; absent or
-null values require no header.
-Parameter headers are forwarded unchanged; request plugins run afterward, so a
-plugin that changes an annotated argument also owns any resulting upstream
-mismatch.
-
-Order is invariant: auth/config before backend selection; request plugins before upstream; response plugins before returning.
-
-## Module Boundaries (`contextforge-data-plane-lib`)
-
-| Module | Owns |
+| Module / crate | Owns |
 | --- | --- |
-| `common.rs` | CLI config shape, JWT claims, Redis config validation, `reqwest::Client` construction |
-| `layers/` | HTTP request extension extraction, request-bound validation |
-| `gateway/` | MCP server behavior, initialize fanout, list merging, prefixed routing, backend service state |
-| `gateway/session_store/` | Local and Redis user session storage |
-| `user_config_store/` | `UserConfigStore` trait, Redis-backed store |
-| `transports/` | Downstream TCP and TLS listener setup |
-| `tools.rs` | Testing-only token, JWKS, and config helpers (`with_tools` feature) |
-
-`Gateway::into_router` registers `/contextforge-rs/health` in every build,
-outside the MCP authentication and config layers. Health remains covered by the
-outer HTTP tracing and metrics layers.
+| Binary `main.rs`, `logging.rs` | Startup wiring and telemetry providers. |
+| Library `common.rs` | CLI configuration, Redis/TLS validation, upstream HTTP client construction. |
+| Library `authorization/` | JWKS verification and principal extraction. |
+| Library `layers/` | Request metadata, authentication/configuration boundaries, and validation. |
+| Library `gateway/` | MCP method handlers, explicit routing, per-request backend clients, progress forwarding. |
+| Library `user_config_store/` | `UserConfigStore` and Redis/cache implementation. |
+| Library `transports/` | TCP and TLS listeners. |
+| Library `tools.rs` | Development bootstrap routes, gated by `with_tools`. |
+| `contextforge-data-plane-apis` | Published configuration models and schemas. |
+| `contextforge-data-plane-cpex` | Registry, runtime reloads, request hook state, and CMF adapters. |
 
 ## State Ownership
 
 | State | Owner | Lifetime |
 | --- | --- | --- |
-| CLI `Config` | Binary startup + `Gateway` | Process |
-| JWT decoders | `ContextForgeDataPlaneAppState` | Process |
-| User config | `RedisUserConfigStore` (LRU + Redis) | Request-path consumed; control-plane authored |
-| Request identity / VirtualHostId | Request extensions | One HTTP request |
-| Downstream session id | RMCP + `SessionId` extension | MCP session |
-| Backend RMCP services (initialize, list ops) | `BackendTransports` map | Local process, per principal/backend/session |
-| Backend RMCP services (call_tool) | Per-request connection | Single HTTP request |
-| Local user session mapping | `LocalUserSessionStore` | Local LRU, 50k entries, 1 hour |
-| Plugin manager | `CpexRuntimeRegistry` | Process, reloadable |
+| Parsed config and shared upstream HTTP client | Gateway | Process. |
+| JWKS keys | JWT authorization service | Five-minute cache; fetched when verification needs them. |
+| User config | Redis store and optional local LRU | Redis is authoritative; local capacity 50,000, default expiry 60 seconds. |
+| Principal, claims, virtual-host ID, config snapshot | HTTP request extensions | One request. |
+| Backend RMCP service | Routed operation | One request; explicitly closed after the call. |
+| Tool progress-token mapping | Request's backend client | While the tool call is in flight. |
+| Active CPEX runtime | Registry | Reloadable; in-flight hook state pins its selected runtime. |
+| RMCP session manager | RMCP service (`LocalSessionManager`) | Transport implementation detail; no session is required by the supported modern request contract. |
 
-> **Session rule:** backend MCP services are local process state. Sticky routing required for load-balanced deployments.
+The library no longer has `BackendTransports`, `SessionId` middleware, or a
+`LocalUserSessionStore`. Modern routing never reuses backend session state from
+a prior request and does not require load-balancer affinity.
 
-## Executor Shapes
+Cache hits do not extend a user-config entry's expiry. A miss releases the LRU
+lock before reading Redis. `--user-config-cache-expiry-seconds 0` disables this
+cache. Development config writes update the local process's cache immediately;
+other replicas see the write after their own expiry.
 
-| `--single-runtime` | Shape |
-| --- | --- |
-| `true` (default) | One multi-thread Tokio runtime, `--number-of-cpus` workers. All connections share one `BackendTransports`. |
-| `false` | One OS thread per CPU, each with its own current-thread Tokio runtime and own `BackendTransports`. `SO_REUSEPORT` spreads connections — no session affinity. **Stateful MCP sessions need `--single-runtime true`**. |
+## Executor and Locks
 
-In multi-runtime mode, the first thread initializes the optional CPEX plugin runtime before the others start; the current-thread builders are tuned with a global queue interval of `1024` and `4` I/O events per tick.
+The binary starts one Tokio runtime through `#[tokio::main]`. The parsed
+`--number-of-cpus` and `--single-runtime` fields are currently not used to
+construct it. Do not use those flags to tune workers or select per-CPU runtimes.
 
-> **Multi-runtime consequence:** each runtime thread builds its own `BackendTransports` map and user-session store. Backend session state is per-runtime-thread, and `SO_REUSEPORT` gives no connection affinity — later requests in a streamable HTTP session can land on a thread that does not own the session. Treat single-runtime as the only mode supporting stateful MCP sessions today.
+Locks have specific scopes:
 
-## Lock Design
+- The user-config LRU mutex protects cache access, not Redis I/O.
+- JWKS refresh and plugin-config connection management synchronize their own
+  shared state; do not assume all network I/O is globally lock-free.
+- Tool progress tracking holds a write guard while enqueuing the backend call
+  so an early notification cannot race registration.
+- Tool hook state uses a mutex to serialize progress and final-response plugin
+  context updates. Prompt/resource state belongs to one request.
 
-| State | Lock | Contention profile |
-| --- | --- | --- |
-| `BackendTransports` map | `Arc<tokio::sync::Mutex<HashMap<...>>>` | Locked briefly on initialize insert, list-op borrow, and cleanup. Borrowing clones `Arc<RunningService>` handles so the lock is not held across backend calls. `call_tool` bypasses this map entirely. |
-| Subscription set | `Arc<tokio::sync::Mutex<HashSet<String>>>` | Local `subscribe`/`unsubscribe` only. |
-| User config LRU cache | `Arc<tokio::sync::Mutex<LruCache>>` inside `RedisUserConfigStore` | One lock per config lookup on the hot path; misses add a Redis round trip. |
-| User session LRU cache | Same pattern in `LocalUserSessionStore` | Initialize and delete paths. |
-| JWT decoders, upstream `reqwest::Client`, process `Config` | No lock — immutable after startup, shared by `Arc`/clone. | None. |
-
-Design rule: locks guard maps of handles, not I/O. Backend calls, Redis reads, and plugin hooks all run outside any gateway lock.
+There is no shared map of live backend transports to lock during routing.
 
 ## Listener Behavior
 
-The TCP listener binds with `reuseaddr`, `reuseport`, and keepalive, listens with a backlog of `1024`, and serves Axum with graceful shutdown on `ctrl_c`. The TLS listener accepts by hand through Rustls and serves the same router via Hyper.
+The TCP listener uses socket reuse options, keepalive, and backlog `1024`, then
+serves Axum with Ctrl-C graceful shutdown. The TLS listener accepts through
+Rustls and serves the same router through Hyper. See the transport implementation
+before relying on identical shutdown behavior between the two listener types.
 
-## Allocator
+The binary uses `tikv_jemallocator` as its global allocator. Performance claims
+about it require a measured workload; see [Performance](performance.md).
 
-The binary sets `tikv_jemallocator` as the global allocator. jemalloc holds up better than the system allocator under the many small, short-lived allocations of per-request JSON and header processing.
+## Cancellation, Progress, and Plugins
 
-## Fanout And Cancellation
+`tools/call` observes the downstream cancellation token and forwards cancellation
+to the in-flight backend request. Progress notifications translate the generated
+backend token to the caller's token; unknown tokens are dropped. Configured tool
+post-hooks can inspect stream events, and a denied notification is dropped.
+Prompt/resource operations should not be assumed to have the same explicit
+cancellation relay.
 
-- `initialize` opens one backend transport per configured backend concurrently (`futures::future::join_all`); a failed backend degrades that backend only.
-- List methods fan out to all connected backends concurrently and merge.
-- Targeted calls (except `call_tool`) resolve exactly one backend service handle from `BackendTransports`.
-- Targeted tool, prompt, and resource calls run configured pre/post plugin hooks after backend routing. `call_tool` creates a fresh per-request backend connection via `connect_backend_for_request`, then explicitly closes it before returning.
-- `call_tool` watches the downstream cancellation token and forwards a cancel to the backend if the client gives up first; backend progress notifications are forwarded downstream while the call is in flight.
+Pre-hooks select a runtime before backend I/O. Typed hook state retains both
+that runtime and whether a post-hook was enabled. Reloads affect subsequent
+requests; they cannot add a hook or change policy halfway through a call.
+Invalid reloads mark the registry failed for new calls while already pinned
+requests can finish. Details are in [Plugin Config](config.md#plugin-config-redis-key-contextforgegatewayruntimepluginconfig).
 
-Resource reads carry a concrete, request-owned hook state across backend I/O. It pins the runtime selected before the read, or records that no post hook was configured. Post processing consumes that state without type erasure, downcasts, or a second registry lookup.
-
-## Startup And Response Flow
-
-Startup sequence (`main.rs` → `Gateway::run_gateway`):
+## Startup
 
 ```text
-install rustls crypto provider
+Tokio main
+  -> install Rustls crypto provider
   -> Config::parse()
-  -> logging::init_tracing_logging(&config)
-  -> Runtime::from(&config)          ← sets executor shape
-  -> optional CpexRuntimeRegistry
-  -> Gateway::builder()
-       .with_config(config)
-       .with_user_config_store_type(UserConfigStoreType::Redis)
-       .with_session_manager(LocalSessionManager::default())
-       .with_plugin_runtime(...)
-       .build()
-  -> runtime.execute(gateway, plugin_registry)
+  -> initialize logging and optional telemetry providers
+  -> optional CPEX registry and compiled factory registration
+  -> construct JWKS authorization service
+  -> build Gateway with Redis config store and RMCP session manager
+  -> initialize CPEX runtime from Redis, if enabled
+  -> run_gateway(): build router and start configured listeners
 ```
 
-Response unwind order (Tower layers execute outside-in, so unwind is inside-out):
+Some checks are lazy: JWKS retrieval occurs during token verification, and
+backend connectivity is checked when an operation selects that backend. Health
+is HTTP liveness, not dependency readiness.
 
-```text
-backend response
-  -> response plugin hooks (tool, prompt, and resource calls)
-  -> merge / namespace / pass through
-  -> virtual_host_config_layer response side
-  -> user_config_store_layer response side
-  -> session_id_layer response side  ← on DELETE success: remove session + backend transports
-  -> claims_layer response side
-  -> virtual_host_id_layer response side
-  -> CORS, mcp_origin_layer, TraceLayer, HttpMetricsLayer
-  -> downstream response
-```
-
-Flow checkpoints — each must exist before the next dependency runs:
-
-| Checkpoint | Fact established | Next dependency |
-| --- | --- | --- |
-| Listener | Request reached the ContextForge external dataplane over TCP/TLS. | Metrics, tracing, nested routing. |
-| Path extraction | Inner path matched `/servers/{virtual_host_id}/mcp`. | MCP handlers can resolve a `VirtualHost`. |
-| Claims validation | Bearer token accepted; `ContextForgeClaims` exists. | Config lookup can use `claims.sub`. |
-| User config lookup | `UserConfig` exists for the authenticated subject. | Virtual host check can run. |
-| Virtual host check | Path's virtual host id exists in the caller's config. | MCP validators can resolve the selected `VirtualHost`. |
-| RMCP dispatch | Streamable HTTP request mapped to an MCP method. | Handler chooses initialize, routed call, or local behavior. |
-
-## MCP-First, Not MCP-Only
-
-The current code implements MCP behavior, but the gateway shell is broader:
-
-```text
-auth → config lookup → transport setup → plugin runtime → telemetry → session strategy
-```
-
-Keep protocol-neutral concerns (auth, config ingestion, TLS handling, plugin execution, telemetry, runtime shape, session strategy) reusable. Future A2A or model-provider routing should reuse the gateway shell without copying the MCP routing stack. MCP-specific behavior must remain isolated to the current MCP modules.
-
-## Transport Security Split
-
-Transport security is split across two owners; keep this visible:
-
-| Concern | Stable owner | Expected evolution |
-| --- | --- | --- |
-| Gateway listener certificate | Process config. | Stays process config — it belongs to the listener. |
-| JWT verification keys | Process config. | Stays process config. |
-| Backend URL, auth headers, pass-through policy, allowed objects | Runtime user config (`BackendMCPGateway`). | Grows as per-backend policy detail increases. |
-| Backend-specific TLS trust and client identity | Process config today. | Should move to runtime config or referenced secret material per backend. |
-
-Do not bury transport security decisions inside MCP method handlers. They belong in startup assembly or explicit backend transport construction.
-
-## Plugin Hook Expansion Requirements
-
-Current supported hooks cover tool, prompt, and resource pre/post lifecycles. Before adding any new hook point, define all of the following:
-
-| Requirement | Why |
-| --- | --- |
-| Failure behavior | Does a plugin error abort the call, degrade gracefully, or log and continue? |
-| Timeout behavior | What happens when a plugin takes too long on the hot path? |
-| Cancellation behavior | Can the downstream cancel propagate through the plugin? |
-| Streaming/SSE behavior | Does the hook fire once or per-chunk? What is the backpressure model? |
-| Telemetry attribution | Which span/metric owns plugin latency and errors? |
-
-Avoid ad hoc plugin calls in routing code. New hook points belong at explicit, documented pipeline positions.
-
-## Architecture-Change Follow-Through Matrix
-
-Changing a load-bearing choice requires updating more than one file:
+## Architecture-Change Follow-Through
 
 | Change | Required follow-through |
 | --- | --- |
-| Downstream MCP version | Coordinate with the ContextForge control plane and built-in dataplane; update the `2026-07-28`/`2025-11-25` compatibility matrix, protocol tests, examples, and front-door routing. The ContextForge built-in dataplane handles both stateful and stateless traffic; the ContextForge external dataplane handles both supported Streamable HTTP versions statelessly. |
-| Backend namespace / prefix contract | Update merge logic, split logic, tests, docs, and control-plane integration if client-facing surface moves. |
-| Session state moves external | Update `SessionManager`, cleanup behavior, load-balancing docs, and failure-mode tests. |
-| Config transport changes | Keep `UserConfigStore` as the boundary; update adapter tests. |
-| Plugin hook surface expands | Document ordering, failure, timeout, cancellation, streaming, and telemetry before landing. |
-| New protocol joins the gateway | Keep shared shell protocol-neutral; isolate new protocol-specific routing. |
+| MCP behavior | Update modern protocol tests, examples, and front-door coordination. Do not expand legacy compatibility. |
+| Published names, routes, or config shapes | Update publisher/consumer contracts, schemas, and integration tests. |
+| Config transport | Keep user routing behind `UserConfigStore`; update adapter tests. |
+| Plugin hook surface | Define ordering, failure, timeout, cancellation, streaming, and telemetry behavior; update validation and factory registration together. |
+| Request lifecycle | Verify cancellation, backend cleanup, progress correlation, and replica independence. |

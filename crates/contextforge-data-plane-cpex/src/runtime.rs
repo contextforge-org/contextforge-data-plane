@@ -14,6 +14,7 @@ use cpex::cpex_core::{
     manager::PluginManager,
 };
 use rmcp::ErrorData;
+use tracing::instrument;
 
 use crate::{
     cmf::{CmfResponse, Operation, modified_message_payload, plugin_denied_error},
@@ -61,6 +62,7 @@ impl GatewayPluginRuntime {
         Ok(Self { manager, hooks })
     }
 
+    #[instrument(name = "cmf_plugin_before", level = "info", skip(self, payload, update))]
     pub(crate) async fn before<U: Default>(
         self: &Arc<Self>,
         operation: Operation,
@@ -92,6 +94,7 @@ impl GatewayPluginRuntime {
         Ok((update, state))
     }
 
+    #[instrument(name = "cmf_plugin_invoke", level = "info", skip(self, payload, context_table))]
     async fn invoke(
         &self,
         hook: &'static str,
