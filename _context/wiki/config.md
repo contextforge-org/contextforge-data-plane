@@ -3,10 +3,11 @@
 ## Minimum Required Flags
 
 ```text
---redis-address   --redis-port   --redis-mode
+--redis-address   --redis-port   --redis-mode   --jwks-url
 ```
 
-Plus at least: `--address` or `--tls-address`, `--token-verification-public-key` or `--token-verification-secret`.
+Plus at least one listener: `--address` or `--tls-address`. Development builds
+with `with_tools` also require `--token-verification-private-key`.
 
 ## Complete CLI and Environment Reference
 
@@ -30,9 +31,14 @@ Origin and Host settings retain the explicitly configured
 | `--tls-address <host:port>` | `CONTEXTFORGE_DATA_PLANE_TLS_ADDRESS` | Optional | TLS listener; requires server certificate and key. |
 | `--server-certificate <path>` | `CONTEXTFORGE_DATA_PLANE_TLS_SERVER_CERTIFICATE` | With `--tls-address` | PEM certificate chain for downstream TLS. |
 | `--server-private-key <path>` | `CONTEXTFORGE_DATA_PLANE_TLS_SERVER_PRIVATE_KEY` | With `--tls-address` | PEM private key for downstream TLS. |
-| `--token-verification-public-key <path>` | `CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PUBLIC_KEY` | For RSA tokens | Verifies `RS256`, `RS384`, and `RS512` tokens. |
-| `--token-verification-secret <secret>` | `CONTEXTFORGE_DATA_PLANE_TOKEN_SECRET` | For HMAC tokens | Verifies `HS256`, `HS384`, and `HS512` tokens. |
-| `--token-verification-private-key <path>` | `CONTEXTFORGE_DATA_PLANE_TOKEN_VERIFICATION_PRIVATE_KEY` | Required when built with `with_tools` | Signs tokens for the optional local bootstrap helper. |
+| `--jwks-url <url>` | `CONTEXTFORGE_DATA_PLANE_JWKS_URL` | Required | Fetches RSA/EC JWT verification keys. HTTPS required except for loopback HTTP testing. |
+| `--jwks-ca-cert-path <path>` | `CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH` | Optional | PEM CA bundle trusted by the JWKS HTTP client. |
+| `--token-verification-private-key <path>` | None (CLI only) | Required when built with `with_tools` | Signs local test tokens and supplies the public key served by the local JWKS helper. |
+| `--cel-principal-extractor-path <path>` | None (CLI only) | Optional | CEL principal mapping for custom claim layouts; otherwise uses the default user/tenant claim mapping below. |
+
+The former `--token-verification-public-key` and `--token-verification-secret`
+flags are no longer accepted. For the local signing/JWKS setup, follow
+[Getting Started](getting-started.md#local-cargo-dev-workflow).
 
 ### MCP request validation
 
@@ -102,16 +108,28 @@ the HTTP transport.
 
 ## JWT Claims (validated by `claims_layer`)
 
-| Claim | Required value |
+The JWT signature is checked against the configured JWKS. The default principal
+extractor then requires user and tenant IDs at the top level of the claims:
+
+| Claim | Current behavior |
 | --- | --- |
-| `iss` | `mcpgateway` |
-| `aud` | `mcpgateway-api` |
-| `exp` | present, not expired |
-| `sub` | → selects Redis user config key |
+| `sub`, `user_id`, `UserId` | First present alias must be a string; supplies the user ID used for Redis config lookup. |
+| `tenantId`, `tenant_id` | First present alias must be a string; supplies the principal's tenant ID. |
+| `exp` | Checked when present; the local helper sets a one-hour expiry. |
+| `nbf` | Checked when present; rejects tokens that are not yet valid, subject to verifier leeway. |
+| `iss`, `aud` | No fixed issuer or audience is currently enforced by the JWKS verifier. |
 
-Optional: `token_use`, `iat`, `teams`, `scopes`, `user.full_name`.
+The default extractor does not infer the tenant from `teams`, email, or a nested
+`user` object. Use `--cel-principal-extractor-path` for a custom mapping.
+An earlier alias with a non-string value prevents fallback to a later alias.
 
-> **No revocation:** a leaked token is valid until `exp`. Rotate the signing key and restart to invalidate all outstanding tokens.
+The local `GET /contextforge-rs/admin/tokens/{tenant_id}/{user_id}` helper sets
+`tenant_id` and `sub` from the path. Its raw JWT response belongs in the
+`Authorization: Bearer ...` header; it is not a JSON token object.
+
+There is no per-token revocation. Verification keys are cached for five minutes;
+removing a key from JWKS is not immediate invalidation of cached keys. Restart
+the dataplane after removing a key if that cache must be cleared immediately.
 
 ## UserConfig Shape (from `contextforge-data-plane-apis`)
 
@@ -190,6 +208,13 @@ Rejected: routing-based selection, plugin dirs, global policies, LLM hooks, plug
 Config validation and `CmfPluginFactory` registration must agree on that list: a hook accepted by validation but not registered leaves the plugin loaded and silently inert.
 Reload watcher: 10-minute interval. Invalid reload → runtime marked failed.
 
+Compile bundled factories with `--features plugins` and enable execution with
+`--runtime-plugins-enabled true`. A valid document must exist before startup;
+a missing document fails initialization. The
+[quick start](getting-started.md#2-seed-plugin-configuration-before-startup)
+seeds a secrets-detection policy. `test-plugins` additionally compiles the demo
+factories used below; it is not needed for bundled secrets detection.
+
 ### Tool Call Hook Behavior
 
 For `call_tool`, the pre hook runs after backend routing has selected the backend and stripped the public prefix. The hook sees the backend name, routed tool name, and arguments. It can leave arguments unchanged, replace arguments, or deny the call.
@@ -226,13 +251,10 @@ The pre call returns an opaque, concrete `ResourceHookState` consumed by the pos
 
 The optional `test-plugins` feature compiles demo factories from the `cpex-plugins-rs` repository. Redis configuration activates factories already present in the binary; it never loads new Rust code into a running process.
 
-Start lightweight dependencies:
-
-```bash
-docker compose -f docker/docker-compose-local.yaml up -d redis gateway-one gateway-two
-```
-
-Register payload-marker configuration before starting the ContextForge external dataplane:
+Start Redis and the counter fixture using the
+[quick-start dependency command](getting-started.md#1-start-redis-and-the-counter-fixture).
+The following command replaces the local plugin document with payload-marker
+configuration; run it before starting the ContextForge external dataplane:
 
 ```bash
 docker compose -f docker/docker-compose-local.yaml exec -T redis \
@@ -254,13 +276,13 @@ Build and run with demo factories and runtime execution enabled:
 
 ```bash
 cargo run -p contextforge-data-plane \
-  --features 'contextforge-data-plane-lib/with_tools,test-plugins' \
+  --features with_tools,plugins,test-plugins \
   --bin contextforge-data-plane -- \
   --address 127.0.0.1:8001 \
   --redis-address 127.0.0.1 \
   --redis-port 6379 \
   --redis-mode plain-text \
-  --token-verification-public-key assets/jwt.key.pub \
+  --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true
@@ -311,7 +333,9 @@ Metrics are pushed by a `PeriodicReader` every **30 seconds**. Allow ~35s after 
 
 | Prefix | Boundary |
 | --- | --- |
-| `claims_layer` | JWT validation failures |
+| `validate: unable to refresh SaaS JWKS` | Verification-key retrieval failures |
+| `validate_and_decode_claims` | JWT signature and time validation failures |
+| `Can't extract the principal` | Missing or invalid user/tenant claims |
 | `user_config_store_layer` | Config lookup / Redis errors |
 | `virtual_host_config_layer` | Unknown virtual host |
 | `AuthorizedCallValidator::validate` | Post-session MCP validation |
@@ -322,7 +346,7 @@ Metrics are pushed by a `PeriodicReader` every **30 seconds**. Allow ~35s after 
 
 | Symptom | Where to look |
 | --- | --- |
-| `401` | `claims_layer` logs: missing/invalid token, unsupported algorithm, no decoder key |
+| `401` | Bearer header, JWKS retrieval/validation logs, and principal-extraction logs above |
 | `400` config error | `user_config_store_layer` logs + Redis content for the JWT subject |
 | `404 Server not found` | `virtual_host_config_layer` debug: requested vhost id vs caller's config |
 | MCP routing errors | `AuthorizedCallValidator::validate` debug, then `call_tool`/`read_resource`/`get_prompt` warns |
@@ -369,7 +393,7 @@ flowchart TD
     SYM --> SBACK["Backend failure"]
     SYM --> SPLUG["Plugin problem"]
 
-    S401 --> L401["grep: claims_layer\nmissing/invalid token\nbad algorithm / no decoder key"]
+    S401 --> L401["JWT / JWKS logs\nmissing/invalid token\nkey retrieval / user and tenant claims"]
     S400 --> L400["grep: user_config_store_layer\n+ Redis content for JWT subject"]
     S404 --> L404["grep: virtual_host_config_layer\nrequested vhost vs caller config"]
     SMCP --> LMCP["grep: AuthorizedCallValidator::validate\nthen call_tool / read_resource / get_prompt warns"]
@@ -387,15 +411,21 @@ docker compose \
   up -d
 ```
 
-Run the gateway with export enabled (RUST_TRACE_LOG=debug required for trace export):
+First complete the [local quick start](getting-started.md#local-cargo-dev-workflow),
+including plugin configuration. Stop its Cargo process, then restart with export
+enabled (RUST_TRACE_LOG=debug required for trace export):
 ```bash
 RUST_TRACE_LOG=debug \
-cargo run --release --bin contextforge-data-plane -- \
-  --address 0.0.0.0:8001 \
+cargo run --release -p contextforge-data-plane --features with_tools,plugins \
+  --bin contextforge-data-plane -- \
+  --address 127.0.0.1:8001 \
   --redis-port 6379 --redis-address 127.0.0.1 --redis-mode=plain-text \
-  --token-verification-public-key assets/jwt.key.pub \
+  --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
+  --token-verification-private-key assets/jwt.key \
   --number-of-cpus 4 \
   --upstream-connection-mode=plain-text-or-tls \
+  --runtime-plugins-enabled true \
+  --user-config-cache-expiry-seconds 0 \
   --enable-open-telemetry true \
   --enable-otel-metrics true \
   --otlp-protocol http-protobuf \

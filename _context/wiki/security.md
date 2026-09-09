@@ -110,12 +110,18 @@ remains and the upstream server may reject the mismatch.
 
 ## Local Bootstrap Helpers (`with_tools`)
 
-The `contextforge-data-plane-lib/with_tools` feature compiles in:
-- `/contextforge-rs/admin/tokens/{user}`
-- `/contextforge-rs/admin/userconfigs/{user}`
-- `/contextforge-rs/health`
+The binary's `with_tools` feature forwards to
+`contextforge-data-plane-lib/with_tools` and compiles in:
+
+- `GET` / `POST /contextforge-rs/admin/tokens/{tenant_id}/{user_id}`
+- `GET /contextforge-rs/admin/.well-known/jwks.json`
+- `POST /contextforge-rs/admin/userconfigs/{user_id}`
 
 These routes are registered **outside the authentication middleware** — unauthenticated by design. They exist only for local bootstrap. **Production builds must not enable this feature.** In a real deployment the control plane mints tokens and writes config.
+
+`GET /contextforge-rs/health` is also unauthenticated, but is available in every
+build without `with_tools`. The local token and JWKS helpers use the same RSA
+private key; see [Getting Started](getting-started.md#local-cargo-dev-workflow).
 
 ## Secrets Handling
 

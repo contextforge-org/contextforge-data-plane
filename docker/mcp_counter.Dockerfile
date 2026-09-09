@@ -18,7 +18,7 @@ RUN \
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,id=cargo,target=/usr/local/cargo/registry  \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
-    cargo build --release --example servers_counter_streamhttp
+    cargo build --release -p mcp-server-examples --example servers_counter_streamhttp
 
 FROM debian:trixie-slim
 RUN <<EOF

@@ -8,8 +8,9 @@
 | --- | --- | --- |
 | Path doesn't match `/servers/{id}/mcp` | `400` | `virtual_host_id_layer` |
 | Missing `Authorization` / non-`Bearer` scheme | `401` | `claims_layer` |
-| JWT undecoded, unsupported algorithm, no key | `401` | `claims_layer` |
-| Expired token, wrong issuer/audience | `401` | `claims_layer` |
+| JWT undecoded, unsupported algorithm, no matching key, or JWKS retrieval failure | `401` `Invalid token` | `claims_layer` |
+| Expired token or token not yet valid (when time claims are present) | `401` `Invalid token` | `claims_layer` |
+| Missing/non-string user or tenant claim under the configured mapping | `401` `Invalid token. Unable to extract the principal from claims` | `PrincipalExtractorLayer` |
 | No user config for `claims.sub`, or claims absent | `400` | `user_config_store_layer` |
 | Config store error (not missing) | `500` | `user_config_store_layer` |
 | Virtual host id absent from caller's config | `404` `{"detail":"Server not found"}` | `virtual_host_config_layer` |

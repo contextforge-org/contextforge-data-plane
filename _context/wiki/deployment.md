@@ -8,7 +8,7 @@
 ## Checklist
 
 1. Front door routes only `/contextforge-rs` to the ContextForge external dataplane.
-2. JWT verification key/secret matches the control plane's signing material; clients use control-plane API tokens whose `sub` matches the published user-config key.
+2. `--jwks-url` points to the trusted issuer's RSA/EC public signing keys, reachable from the dataplane. Clients supply user and tenant claims accepted by the principal extractor; the user ID must match the published config key. See [JWT Claims](config.md#jwt-claims-validated-by-claims_layer).
 3. Redis reachable; TLS/mTLS across trust zones; write access restricted to the control plane; `DATAPLANE_PUBLISHER=true` on the control plane.
 4. Upstream connection mode matches backend URL schemes.
 5. One replica per `Mcp-session-id` (single replica or sticky routing).
@@ -18,7 +18,9 @@
 
 ## Health Endpoint
 
-**`/contextforge-rs/health` is a `with_tools` bootstrap helper only.** Production builds compile it out. Use TCP-level liveness checks or the exported metrics until a real health endpoint exists.
+`GET /contextforge-rs/health` returns HTTP `200` and `{"status": "healthy"}`
+without authentication in every build, including builds without `with_tools`.
+It checks HTTP liveness, not Redis, JWKS, or backend readiness.
 
 ## nginx Front-Door Routing
 
@@ -70,9 +72,9 @@ Both default to ~60s. For functional tests, shorten the publisher interval and d
 
 | Concern | Current state |
 | --- | --- |
-| JWT revocation | None. A leaked token is valid until `exp`. Rotate the key and restart to invalidate. |
+| JWT revocation | No per-token revocation. Remove the signing key from trusted JWKS; cached keys can remain usable for five minutes. Restart to clear the cache immediately. See [JWT Claims](config.md#jwt-claims-validated-by-claims_layer) for time-claim validation. |
 | CORS / Origin | CORS response headers are permissive. `mcp_origin_layer` validates Origin before authentication, and RMCP validates Host at the MCP service boundary. Configure both `--mcp-allowed-hosts` and `--mcp-allowed-origins` for production. |
-| Local bootstrap routes | `/contextforge-rs/admin/tokens/{user}`, `/admin/userconfigs/{user}`, `/health` are **outside auth middleware — unauthenticated by design.** Only exist with `with_tools`. Production builds must not enable `with_tools`. |
+| Local bootstrap routes | Under `/contextforge-rs`: `/admin/tokens/{tenant_id}/{user_id}`, `/admin/.well-known/jwks.json`, and `/admin/userconfigs/{user_id}` are **outside auth middleware — unauthenticated by design.** Only exist with `with_tools`. Production builds must not enable `with_tools`. `/health` is unauthenticated in every build. |
 | Redis trust | Whoever can write Redis controls routing (arbitrary backend URLs receive caller traffic) AND which registered plugin hooks execute on payloads. Protect with TLS/mTLS and restrict write access to the control plane. |
 | Downstream TLS | Optional. Plain HTTP is acceptable only behind a trusted front door on a private network. Identity is always the bearer JWT, not mTLS. |
 | Plugin code | Fully trusted, in-process. Redis config activates compiled-in factories only — it cannot inject new Rust code. |
