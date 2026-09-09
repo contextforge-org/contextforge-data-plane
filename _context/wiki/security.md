@@ -2,53 +2,55 @@
 
 ## Trust Boundaries
 
-| Boundary | Trust level | Enforced by |
-| --- | --- | --- |
-| Downstream client | Untrusted. Every request must present a valid bearer JWT; session id alone grants nothing without matching principal state. | `claims_layer`, validators, and principal-scoped backend session keys. |
-| JWT verification material | Trust anchor. The RSA public key or HMAC secret in process config decides which tokens are accepted. | Process config; loaded at startup. |
-| Redis | Control-plane trust boundary. Whoever can write Redis controls routing (`UserConfig`) and, when runtime plugins are enabled, which registered hooks execute (`ContextForgeGatewayRuntimePluginConfig`). | Redis TLS/mTLS connection modes; the external dataplane never writes user config in production builds. |
-| Backend MCP servers | Trusted per configured URL. The gateway forwards caller traffic to them and merges their responses. | `UserConfig` backend URLs plus the upstream connection mode. |
-| Plugins | Fully trusted code. Hooks run in-process and can read and mutate tool payloads. | Compiled-in factories only; Redis config activates registered factories, it cannot load new code. |
+| Boundary | Current contract |
+| --- | --- |
+| Downstream client | Untrusted. Every MCP request needs a valid JWT, extracted principal, published virtual host, and an explicit route for targeted objects. |
+| JWKS endpoint | Trust anchor for RSA/EC public verification keys. HTTPS is required except loopback HTTP for local testing. |
+| Redis | Trusted configuration. Writers control backend URLs, object routes, backend credentials, and enabled compiled-in plugin policies. |
+| Backend MCP servers | Receive requests selected by published routing and control their responses. Transport security follows the configured upstream mode. |
+| Plugins | Fully trusted in-process code that can inspect and modify payloads. Redis activates registered factories; it cannot load new Rust code. |
 
 ## Authentication And Authorization
 
-| Plane | Current responsibility |
-| --- | --- |
-| ContextForge control plane | Owns login/SSO, users, teams, IAM, API-token issuance and revocation, and external-dataplane configuration publication. `dataplane_publisher.py` writes visibility-filtered `UserConfig` snapshots to Redis by user email. |
-| ContextForge built-in dataplane | Owns the Python repository's MCP request routes, including old/new protocol and stateful/stateless behavior. |
-| ContextForge external dataplane | Has no IAM or user database. It currently verifies modern MCP bearer JWTs locally, loads `UserConfig` by `sub`, and requires the requested virtual host to exist. No runtime control-plane call occurs. |
+The control plane owns identity management and token issuance. The external
+dataplane verifies tokens and reads published configuration; it has no IAM or
+user database. Configuration does not require a management API call per request,
+but verification can fetch keys from the trusted issuer's JWKS endpoint.
 
-External-dataplane request path: control-plane API token (`sub` = email) → Origin check →
-`claims_layer` → Redis config lookup → virtual-host check → RMCP Host check →
-MCP routing.
-Browser/login session tokens are management-plane credentials, not the
-external-dataplane contract.
+The request path is Origin/header checks → JWT verification → principal
+extraction → user configuration → virtual-host check → RMCP validation →
+published object route → backend call.
 
-- JWT validation accepts `RS256/384/512` or `HS256/384/512` and requires a valid
-  signature, `iss=mcpgateway`, `aud=mcpgateway-api`, and `exp`. `jti` and `user`
-  are required fields; `token_use`, `iat`, `teams`, and `scopes` are optional.
-- Failures: bad/missing JWT → `401`; no user config → `400`; unavailable virtual
-  host → `404`.
-- Authorization is currently coarse: valid JWT plus published virtual host.
-  JWT scopes/teams and object allowlists are not enforced; publishing a backend
-  exposes all objects returned by it.
-- This coarse current behavior does not meet the tentative Phase 3 target. The
-  target requires principal- and isolation-bound snapshots, per-request scope
-  and compiled-RBAC enforcement, and default denial for missing or unauthorized
-  entries. See [Target Authorization Invariants](mcp-capability-allocation.md#target-authorization-invariants).
-- External-dataplane requests do not consult the control-plane token blocklist.
-  Revoked tokens pass JWT validation until `exp` or signing-key rotation/restart.
-  Removing a subject's config eventually blocks all its tokens after publisher
-  and cache expiry.
+- JWT verification uses RSA/EC JWKS keys. HMAC secrets and the old public-key
+  CLI flag are not supported. `exp` and `nbf` are validated when present; no
+  fixed issuer/audience or mandatory expiration claim is enforced today.
+- The default extractor requires a string user ID (`sub`, `user_id`, or
+  `UserId`) and tenant ID (`tenantId` or `tenant_id`). The first present alias
+  wins and must have the right type. User IDs need not be emails. CEL can
+  define a custom mapping; see [Configuration](config.md#jwt-claims-validated-by-claims_layer).
+- The Redis/cache key currently contains **only the extracted user ID**, not
+  the tenant. Identical user IDs in different tenants resolve to the same
+  stored configuration. Tenant extraction alone is not an isolation boundary.
+- The virtual host and each targeted tool, resource, or prompt must exist in
+  that user's published routing maps. Publishing a backend alone does not
+  expose all its objects. The dataplane does not derive routes by prefix.
+- JWT scopes, teams, and compiled RBAC are not independently enforced on this
+  path. Stronger isolation and policy checks in the
+  [target authorization model](mcp-capability-allocation.md#target-authorization-invariants)
+  are proposed work, not current guarantees.
+- There is no per-token blocklist/revocation lookup. Keys are cached for five
+  minutes; removing a JWKS key is not immediate invalidation until refresh or
+  restart. A token without `exp` has no expiration enforced by this verifier.
+  Removing a user's published configuration blocks access after cache expiry.
 
 ## What Compromise Means
 
-| If this is compromised | Impact |
+| Compromise | Impact |
 | --- | --- |
-| JWT signing key or HMAC secret | Attacker mints tokens for any subject and reaches that subject's backends. Rotate the key and restart; no revocation exists. |
-| Redis write access | Attacker rewrites routing (arbitrary backend URLs receive caller traffic) and, if runtime plugins are enabled, chooses which registered hooks run on payloads. Protect Redis with TLS/mTLS and control-plane-only write access. |
-| A backend MCP server | Attacker sees requests routed to that backend and controls its responses; the namespace prefix limits blast radius to that backend's objects. |
-| The gateway process | Full compromise: it holds the decoding keys in memory and live backend sessions. |
+| Trusted JWT signing key | Tokens can be forged for user IDs with published configuration. Remove the compromised key from trusted JWKS and clear cached keys; rotate issuer signing material. |
+| Redis write access | Routing and plugin policy can be replaced, including routing caller payloads and configured credentials to attacker-controlled URLs. |
+| Backend MCP server | It sees requests routed to it and controls their results. Published routes constrain selection; a naming prefix is not a security boundary. |
+| Gateway process or plugin code | Access to live payloads, bearer tokens, configured backend credentials, and in-process state. Production verification uses public keys, but development helpers additionally load a signing private key. |
 
 ## Transport Security
 
@@ -110,12 +112,18 @@ remains and the upstream server may reject the mismatch.
 
 ## Local Bootstrap Helpers (`with_tools`)
 
-The `contextforge-data-plane-lib/with_tools` feature compiles in:
-- `/contextforge-rs/admin/tokens/{user}`
-- `/contextforge-rs/admin/userconfigs/{user}`
-- `/contextforge-rs/health`
+The binary's `with_tools` feature forwards to
+`contextforge-data-plane-lib/with_tools` and compiles in:
+
+- `GET` / `POST /contextforge-rs/admin/tokens/{tenant_id}/{user_id}`
+- `GET /contextforge-rs/admin/.well-known/jwks.json`
+- `POST /contextforge-rs/admin/userconfigs/{user_id}`
 
 These routes are registered **outside the authentication middleware** — unauthenticated by design. They exist only for local bootstrap. **Production builds must not enable this feature.** In a real deployment the control plane mints tokens and writes config.
+
+`GET /contextforge-rs/health` is also unauthenticated, but is available in every
+build without `with_tools`. The local token and JWKS helpers use the same RSA
+private key; see [Getting Started](getting-started.md#local-cargo-dev-workflow).
 
 ## Secrets Handling
 

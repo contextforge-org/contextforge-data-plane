@@ -8,17 +8,17 @@ then follow only the links that are relevant.
 
 | File | What it covers |
 | --- | --- |
-| [getting-started.md](getting-started.md) | Full docker stack, local cargo dev, cf-integration — commands and URIs |
+| [getting-started.md](getting-started.md) | Local Cargo quick start with plugins and JWKS, MCP probes, full Docker stack, cf-integration |
 | [project.md](project.md) | What the project is, goals, stakeholders, key modules, crate ownership, active work |
 | [preferences.md](preferences.md) | Working standards, code style, logging rules, branch naming, AI interaction preferences |
-| [architecture.md](architecture.md) | Current middleware stack order, pipeline shape, module boundaries, state ownership, executor shapes |
+| [architecture.md](architecture.md) | Current middleware stack order, pipeline shape, module boundaries, state ownership, startup, and request lifecycle |
 | [routing.md](routing.md) | Stateless routing model: VirtualHost routing tables, per-request backend lifecycle, method quick reference, header forwarding, plugin hooks |
 | [mcp-capability-allocation.md](mcp-capability-allocation.md) | Tentative ContextForge 2.0 target topology, ownership, state model, Phase 1-4 roadmap, and Phase 3 flows |
 | [failure-modes.md](failure-modes.md) | HTTP/MCP/routing/backend/plugin failure table — exact HTTP codes and JSON-RPC errors |
 | [config.md](config.md) | Key CLI flags, JWT claims, UserConfig shape, plugin config, telemetry debugging, startup validation, local observability stack |
-| [deployment.md](deployment.md) | External-dataplane deployment checklist, health endpoint caveat, nginx routing, TLS choices, session affinity, Redis availability, image pinning |
+| [deployment.md](deployment.md) | External-dataplane deployment checklist, JWKS trust, health checks, nginx routing, TLS choices, replicas, Redis availability, and production build/image limitations |
 | [security.md](security.md) | Trust boundaries among the control plane, built-in dataplane, and external dataplane; Origin/Host validation; transport security; secrets handling |
-| [performance.md](performance.md) | Control-plane Locust load runs, benchmark settings, and built-in-dataplane baseline |
+| [performance.md](performance.md) | Current cf-integration load commands, standalone/full-stack comparisons, and benchmark controls |
 | [testing.md](testing.md) | Workspace checks, in-repo integration tests, full-stack harness lanes, settings, and control-plane baseline |
 
 ## Quick orientation

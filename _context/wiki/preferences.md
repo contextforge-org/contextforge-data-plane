@@ -5,21 +5,22 @@
 A change is not done until:
 1. `cargo fmt --all --check` passes.
 2. `cargo clippy --locked --workspace --all-targets -- -D warnings` is clean.
-3. `cargo nextest run --locked --workspace` passes (fallback: `cargo test`).
-4. `cargo deny check advisories licenses` passes (pre-commit + CI).
-5. `cargo build --locked --workspace` succeeds.
+3. `cargo nextest run --locked --workspace --all-features` passes (fallback: `cargo test`).
+4. `cargo deny check advisories bans licenses` passes (CI; pre-commit runs advisories and licenses).
+5. `cargo build --locked --workspace --all-features` succeeds.
 6. If the change touches the hot path, update the matching wiki page in `_context/wiki/` in the same change.
 
-CI additionally runs `cargo shear --check-test-targets --deny-warnings --locked`.
+CI additionally runs `cargo shear --check-test-targets --deny-warnings --locked`
+and `cargo bench --no-run`.
 
 **By change type:**
 
 | Change type | Minimum extra validation |
 | --- | --- |
 | Docs only | Run `mdbook build _context/wiki` and `mdbook test _context/wiki`; inspect affected headings, tables, and code blocks in the rendered output |
-| Routing or session behavior | New/updated integration tests in `crates/contextforge-data-plane-lib/tests/` against mock backends |
+| Routing or request lifecycle | New/updated integration tests in `crates/contextforge-data-plane-lib/tests/` against mock backends |
 | Config shape | Schema regeneration (`cargo run -p contextforge-data-plane-apis`) + control-plane compatibility check |
-| Plugin behavior | `gateway_plugins.rs` coverage for the new hook path |
+| Plugin behavior | `tests/gateway/plugins.rs` integration coverage plus CPEX/runtime or concrete-plugin tests as appropriate |
 | Performance-sensitive paths | Load-test run before and after |
 
 ## Code style
@@ -49,16 +50,16 @@ CI additionally runs `cargo shear --check-test-targets --deny-warnings --locked`
 
 - The ContextForge external dataplane is pure routing logic. **No IAM, UI, or metrics-storage concerns.**
 - Config access goes through `UserConfigStore` only — never push Redis details into routing code.
-- The backend prefix naming contract must not change without updating merge logic, split logic, and tests.
-- Legacy SSE transport and stateful session behavior are being **removed**. `initialize` remains supported as a stateless compatibility method; do not use it to create affinity, persist client state, or retain backend transports between requests.
+- Preserve the published client-facing naming contract. Routing now uses explicit `ServiceRoute` maps; changes must update the publisher, schemas, and tests rather than reintroducing prefix splitting.
+- Legacy SSE and older-client initialization/session behavior stay on Python routes. Remaining Rust compatibility code is migration state; do not build new behavior on it.
 - Prefer the right architecture over backward compatibility; this project has no external users yet.
 
 ## Protocol target
 
-- The ContextForge external-dataplane target supports MCP **`2026-07-28`** and **`2025-11-25`** over **Streamable HTTP**.
-- Every request is independent for both versions. Do not require `Mcp-Session-Id`, session affinity, or a previously retained backend transport.
-- Retain `initialize` for clients that use it, but generate its response from effective configuration and do not treat it as session establishment. `2026-07-28` tests and examples should continue to exercise `server/discover` and per-request client metadata.
-- Protocol-sensitive tests cover both same-version paths and the best-effort cross-version paths (`2026-07-28` → `2025-11-25` and the reverse). Do not add SSE or versions earlier than `2025-11-25` without a separate architecture decision.
+- The external-dataplane contract targets MCP **`2026-07-28`** over **Streamable HTTP**.
+- Each request is independent. Do not require a session ID, affinity, or a retained backend transport.
+- Tests and examples use `server/discover` and per-request client metadata.
+- Do not add compatibility for older protocol versions, legacy `initialize`/session behavior, or legacy SSE. Keep those clients on control-plane/built-in routes.
 
 ## AI interaction preferences
 

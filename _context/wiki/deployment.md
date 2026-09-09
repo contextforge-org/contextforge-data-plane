@@ -1,78 +1,124 @@
 # Deployment
 
-> This page describes **current deployment requirements**, including session
-> affinity. The tentative target removes live aggregate fan-out and durable
-> upstream-session dependence; see
-> [ContextForge 2.0 Target Architecture and Roadmap](mcp-capability-allocation.md).
+Modern requests are independent and use a fresh backend MCP service per
+operation. There is no sticky-session requirement. Follow
+[Getting Started](getting-started.md) for a local development environment.
 
 ## Checklist
 
-1. Front door routes only `/contextforge-rs` to the ContextForge external dataplane.
-2. JWT verification key/secret matches the control plane's signing material; clients use control-plane API tokens whose `sub` matches the published user-config key.
-3. Redis reachable; TLS/mTLS across trust zones; write access restricted to the control plane; `DATAPLANE_PUBLISHER=true` on the control plane.
-4. Upstream connection mode matches backend URL schemes.
-5. One replica per `Mcp-session-id` (single replica or sticky routing).
-6. `with_tools` feature **disabled** in the production build.
-7. Telemetry export pointed at the collector.
-8. System limits raised: `nofile 65535`, TCP tuning (`tcp_fin_timeout=15`, widened local port range).
+1. Route the configured `/contextforge-rs` prefix to the external dataplane and
+   keep older clients and legacy SSE on Python routes.
+2. Configure a reachable trusted `--jwks-url` and a principal mapping matching
+   the publisher's user IDs and tenant claims.
+3. Provide Redis connectivity and control-plane publication
+   (`DATAPLANE_PUBLISHER=true` in the control-plane deployment). Restrict writes
+   to trusted publishers; use TLS/mTLS across trust zones.
+4. Match the upstream connection mode to backend URL schemes and TLS identities.
+5. Exclude `with_tools` from production builds. Compile `plugins` when needed,
+   publish a valid plugin document before startup, and enable runtime execution.
+6. Configure Origin and Host allowlists for the public deployment.
+7. Configure telemetry collectors and both enable flags when exporting metrics.
+8. Size file-descriptor limits, CPU, and memory for measured concurrent traffic.
 
 ## Health Endpoint
 
-**`/contextforge-rs/health` is a `with_tools` bootstrap helper only.** Production builds compile it out. Use TCP-level liveness checks or the exported metrics until a real health endpoint exists.
+`GET /contextforge-rs/health` returns HTTP `200` and `{"status":"healthy"}`
+without authentication in every build. It checks HTTP liveness, not Redis,
+JWKS, plugin reload health, or backend readiness. Verify an authenticated routed
+request separately when checking deployment readiness.
 
 ## nginx Front-Door Routing
 
-Reference `docker/nginx.conf` split:
-- `location ^~ /contextforge-rs` → proxies to the ContextForge external dataplane.
-- UI and management traffic → ContextForge control plane.
-- Other MCP routes, including stateful and legacy/SSE compatibility routes → ContextForge built-in dataplane.
-- Upstream retries on `error timeout http_502/503/504`: 2 tries, 10-second window. Non-idempotent MCP `POST` bodies are not re-sent after they reached an upstream — only connection-stage failures retry.
+The reference `docker/nginx.conf` sends `/contextforge-rs` to the external
+service and other paths to the Python service. It routes by prefix and does
+not inspect protocol versions. The Python service owns its management and
+built-in MCP routes; an ingress must keep legacy clients off the external route.
 
-## Session Affinity And Failover
+Its upstream retry policy allows connection-stage failover, with two tries
+within ten seconds for configured error/timeout/502/503/504 conditions. It does
+not enable retrying non-idempotent POSTs after they have been sent upstream.
+Do not add blind retries of `tools/call`: a lost response does not prove the
+backend operation failed to execute.
 
-Backend MCP sessions are **local process state** — see [routing.md](routing.md).
+## Replicas and Failover
 
-- >1 replica requires sticky routing by `Mcp-session-id`. The reference nginx config does not provide this; safe shapes today are a single replica or a front door with stickiness.
-- On restart or failover, all sessions are lost. Design clients to treat session-not-found as "reinitialize", not "retry".
+Each request verifies identity, loads configuration, resolves its published
+route, and opens its own backend connection. Replicas need consistent JWKS
+trust, compatible compiled plugin factories, and the same published configuration;
+they do not need affinity by `Mcp-Session-Id`.
+
+A process failure can interrupt an in-flight call. Subsequent modern requests
+can go to another healthy replica without initialization, subject to its own
+configuration-cache freshness and dependency availability.
 
 ## Redis Availability
 
-- Redis is required at startup and on every uncached config lookup.
-- Connection manager retries 1,000 times (rather than failing fast).
-- In-process cache (default 60s) rides out short Redis blips for warm subjects.
-- A cold subject during a Redis outage fails at `user_config_store_layer` → `400` until Redis returns.
+- Redis is needed for initial configuration-store setup and uncached reads.
+- Connection setup uses a manager configured for 1,000 retries.
+- Warm configuration entries can survive an outage until their expiry (default 60 seconds).
+- A missing entry or Redis GET error currently produces HTTP `400`; undecodable
+  configuration produces `500`. See [Failure Modes](failure-modes.md).
+- Enabled CPEX also needs its initial plugin document and checks for reloads
+  every ten minutes. An invalid reload fails new plugin calls closed.
 
-## Images
+## Builds and Images
 
-- CI builds `docker/Dockerfile` on every push to `main` and publishes both `ghcr.io/<owner>/contextforge-data-plane:v<version>` and `ghcr.io/<owner>/contextforge-data-plane:latest`, where `<version>` is the Cargo package version.
-- **Pin the `v`-prefixed tag for reproducible deployments.** `latest` tracks `main`.
-- Builder: `rust:1.96.1` in `docker/Dockerfile`.
-- The reference Compose stack runs the gateway with raised limits worth copying to real deployments: `nofile 65535` and TCP tuning (`tcp_fin_timeout=15`, widened local port range).
+Build a production binary with bundled plugin factories and without local
+bootstrap helpers:
+
+```bash
+cargo build --locked --release -p contextforge-data-plane --features plugins
+```
+
+That feature compiles factories; `--runtime-plugins-enabled true` and a valid
+Redis plugin document are still required to execute them. Production uses the
+issuer's JWKS endpoint and does not supply a local token-signing private key.
+
+**The current reference `docker/Dockerfile` includes `with_tools`.** The image
+workflow uses that Dockerfile, so its published images and the `docker-prod`
+Compose example are not production-hardened builds. Package the production
+binary above in a deployment image that excludes helpers before using it in a
+real environment. The all-features CI conformance artifact includes helpers too.
+
+The image workflow publishes `ghcr.io/<owner>/contextforge-data-plane:latest`
+and `:v<version>` on pushes to `main`, using the Cargo package version. Repeated
+builds can overwrite either tag; **pin an image digest** for reproducibility.
+The current Docker builder is `rust:1.96.1`.
+
+The reference Compose stack sets `nofile 65535` and TCP tuning, but its resource
+reservations must fit the host. These are example settings, not measured
+requirements for every deployment.
 
 ## TLS Choices
 
 | Leg | Options |
 | --- | --- |
-| Front door to gateway | Plain HTTP on a trusted private network (common shape behind nginx), or terminate TLS at the gateway with `--tls-address` plus certificate and key. Both listeners can run at once on different sockets. |
-| Gateway to Redis | `--redis-mode` plain, TLS, or mTLS. Use TLS/mTLS across trust zones — Redis is the config trust boundary. |
-| Gateway to backends | HTTPS-only by default; opt into plain HTTP or mTLS with `--upstream-connection-mode`. |
+| Front door to gateway | HTTP on a trusted private network, or `--tls-address` with server certificate/key. HTTP and TLS listeners can run on distinct sockets. |
+| Gateway to JWKS | HTTPS, optionally with `--jwks-ca-cert-path`. Plain HTTP is restricted to loopback testing. |
+| Gateway to Redis | `--redis-mode plain-text`, `tls`, or `mtls`; use TLS/mTLS across trust zones. |
+| Gateway to backends | HTTPS-only by default; explicitly select HTTP or mTLS modes as needed. |
 
 ## Config Propagation Delay
 
+With healthy publication and reads, a useful staleness budget is:
+
 ```text
-worst-case staleness = publisher interval + user-config cache expiry
+publisher interval + user-config cache expiry + publication/read latency
 ```
 
-Both default to ~60s. For functional tests, shorten the publisher interval and disable the cache. For throughput benchmarks, keep both at 60s.
-
+The Rust cache defaults to 60 seconds; check the deployed publisher's actual
+interval. For functional tests, shorten publication and use cache expiry `0`.
+For benchmarks, report both values and keep them consistent between runs.
+CPEX reloads use a separate ten-minute interval.
 
 ## Security Posture
 
-| Concern | Current state |
-| --- | --- |
-| JWT revocation | None. A leaked token is valid until `exp`. Rotate the key and restart to invalidate. |
-| CORS / Origin | CORS response headers are permissive. `mcp_origin_layer` validates Origin before authentication, and RMCP validates Host at the MCP service boundary. Configure both `--mcp-allowed-hosts` and `--mcp-allowed-origins` for production. |
-| Local bootstrap routes | `/contextforge-rs/admin/tokens/{user}`, `/admin/userconfigs/{user}`, `/health` are **outside auth middleware — unauthenticated by design.** Only exist with `with_tools`. Production builds must not enable `with_tools`. |
-| Redis trust | Whoever can write Redis controls routing (arbitrary backend URLs receive caller traffic) AND which registered plugin hooks execute on payloads. Protect with TLS/mTLS and restrict write access to the control plane. |
-| Downstream TLS | Optional. Plain HTTP is acceptable only behind a trusted front door on a private network. Identity is always the bearer JWT, not mTLS. |
-| Plugin code | Fully trusted, in-process. Redis config activates compiled-in factories only — it cannot inject new Rust code. |
+JWT verification currently does not enforce a fixed issuer/audience, mandatory
+expiration, scopes, or tenant-partitioned config keys. Ensure the issuer and
+publisher contracts fit those limitations. JWKS keys can remain cached for
+five minutes after removal. See [Security](security.md) for the full boundary.
+
+Development token, JWKS, and config-write helpers are unauthenticated and
+compiled only with `with_tools`. Health is unauthenticated in all builds.
+Redis writers control routes and plugin configuration, and plugin code is fully
+trusted in-process code.
