@@ -1,10 +1,15 @@
 # MCP Routing Semantics
 
-The external dataplane is a **pure stateless router**. No session state, no `BackendTransports`, no sticky-routing requirement.
+The modern external-dataplane request path is stateless. It has no retained
+backend transports or sticky-routing requirement. RMCP still supplies a local
+session manager internally; legacy implementation paths are not the supported
+client contract.
 
 ## How a request is routed
 
-1. `validate_stateless` extracts `VirtualHost` from request extensions (set by `virtual_host_config` layer from the JWT virtual-host ID).
+1. Middleware extracts the virtual-host ID from the URL path, verifies the JWT,
+   extracts the principal, and loads that user's configuration.
+   `validate_stateless` resolves the selected `VirtualHost` from request context.
 2. Downstream name is looked up in `VirtualHost::tools`, `::resources`, or `::prompts` — an O(1) table lookup.
 3. `connect_backend_for_request` opens a fresh `StreamableHttpClientTransport`, runs the call, closes the connection.
 
@@ -23,29 +28,36 @@ ServiceRoute { backend_name: String,   // key into VirtualHost::backends
                upstream_name: String } // name/URI forwarded to the backend
 ```
 
-Source: [`user_store.rs`](../../crates/contextforge-data-plane-apis/src/user_store.rs)
+Source: [`user_store.rs`](https://github.com/contextforge-org/contextforge-data-plane/blob/main/crates/contextforge-data-plane-apis/src/user_store.rs)
 
 ## Method quick reference
 
 | Method | Behavior |
 | --- | --- |
+| `server/discover` | Local RMCP discovery response. It is not yet generated from a principal-bound effective catalog. |
 | `initialize` (`2026-07-28`) | `INVALID_REQUEST` — not supported by this dataplane. |
-| `initialize` (legacy) | Stub `InitializeResult`; no backend fanout. Supports older clients during migration. |
-| `list_tools`, `list_resources`, `list_resource_templates`, `list_prompts` | `INVALID_REQUEST` — delegated to control plane. |
-| `call_tool` | Lookup in `tools` map → pre-hook → fresh connection → call → post-hook → close. Forwards cancellation; tracks progress tokens. |
-| `read_resource` | Lookup in `resources` map → fresh connection → call with upstream URI → close. |
-| `get_prompt` | Lookup in `prompts` map → pre-hook → fresh connection → call → post-hook → close. |
-| `subscribe`, `unsubscribe`, `complete` | `INVALID_REQUEST` — delegated to control plane. |
-| `ping` | Local success; no backend fanout. |
-| `DELETE` | RMCP handles; `session_id_layer` removes the `LocalUserSessionStore` entry. No backend state to clean up. |
+| Legacy `initialize` code | Stub result without backend fan-out; temporary migration behavior, not a supported client contract. |
+| `tools/list`, `resources/list`, `resources/templates/list`, `prompts/list` | `INVALID_REQUEST` — catalog operations remain on control-plane routes. |
+| `tools/call` | Route → parameter-header validation → pre-hook → connect → call → close → post-hook. Explicit cancellation relay and progress correlation. |
+| `resources/read` | Route → pre-hook and permitted URI rewrite → connect → read → close → post-hook. |
+| `prompts/get` | Route → pre-hook → connect → get prompt → close → post-hook. |
+| `resources/subscribe`, `resources/unsubscribe`, `completion/complete` | `INVALID_REQUEST` — not implemented in this dataplane. |
+| `ping` | Local success; no backend fan-out. |
+
+Post-hooks process successful backend responses. No `initialize`, session ID,
+or DELETE cleanup request is required for the modern call lifecycle. Resource
+reads resolve exact published URIs; the presence of a `resource_templates` map
+does not implement template listing or dynamic URI matching.
 
 ## Header forwarding
 
-Applied in order per upstream call: Host (from backend URL, HTTPS only) → passthrough (`BackendMCPGateway::passthrough_headers`) → `Mcp-Param-*` auto-forward → trace context → add (`add_headers`, overrides passthrough) → remove (`remove_headers`, applied last).
+Applied in order per upstream call: Host (from backend URL, HTTPS only) → passthrough (`BackendMCPGateway::passthrough_headers`) → `Mcp-Param-*` auto-forward → add (`add_headers`, overrides passthrough) → remove (`remove_headers`) → current trace-context injection.
 
 Protected headers that config can never touch: `Host`, `Content-Length`, `Content-Type`, all RFC 7230 hop-by-hop headers, `Mcp-Session-Id`, `Accept`, `Last-Event-Id`, and all computed MCP standard headers (`Mcp-Method`, `Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Param-*`).
 
-For clients on `≥ 2026-07-28`, `call_tool` validates `Mcp-Param-*` headers against `BackendMCPGateway::tool_schemas` before contacting the backend.
+For clients on `≥ 2026-07-28`, `call_tool` validates `Mcp-Param-*` headers against `BackendMCPGateway::tool_schemas` when a schema is published, before
+plugins or backend I/O. Without a schema the headers pass through without local
+validation.
 
 ## Plugin hooks
 

@@ -60,7 +60,7 @@ for configuration and the optional [demo plugins](config.md#demo-plugin-workflow
 ### 3. Start the dataplane
 
 ```bash
-RUST_LOG=info RUST_FILE_LOG=info \
+RUST_LOG=info \
 cargo run -p contextforge-data-plane --features with_tools,plugins \
   --bin contextforge-data-plane -- \
   --address 127.0.0.1:8001 \
@@ -71,8 +71,7 @@ cargo run -p contextforge-data-plane --features with_tools,plugins \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true \
-  --user-config-cache-expiry-seconds 0 \
-  --number-of-cpus 4
+  --user-config-cache-expiry-seconds 0
 ```
 
 The `plugins` feature compiles bundled factories; `--runtime-plugins-enabled true`
@@ -234,41 +233,34 @@ docker compose -f docker/docker-compose-local.yaml down
 
 ## Full Docker Stack
 
-The full stack adds nginx, the Python control plane/built-in dataplane,
-Postgres, and automatic backend registration. The checked-in Compose JWT
-settings still use the former key-file environment variables; configure a
-reachable `CONTEXTFORGE_DATA_PLANE_JWKS_URL` and the appropriate signing setup
-before using it. The local Cargo workflow above supplies both explicitly.
-See [Deployment](deployment.md) for the production trust setup.
+The repository also contains a full Compose topology with nginx, the Python
+control plane/built-in dataplane, Postgres, Redis, and automatic registration of
+a Fast Time backend. **It needs configuration updates before it is a runnable
+JWKS-based setup.** Use the local Cargo steps above for the working quick start.
 
-```bash
-make docker-prod
-make compose-up
-```
+Before using the full topology:
 
-Wait for `register_fast_time` to finish, then allow ~60s config propagation:
+- Replace the old token public-key/secret settings with a reachable
+  `CONTEXTFORGE_DATA_PLANE_JWKS_URL` trusted by the Rust service.
+- The current reference image includes `with_tools`, so it also needs an
+  explicit `--token-verification-private-key` path and mounted development key.
+  For production, package a build without helpers instead.
+- Check that the control-plane publisher emits the current backend protocol
+  field and explicit object routes, with keys matching the extracted user ID.
+- Match CPU and memory reservations to the Docker host and account for both
+  publisher and Rust-cache delay when verifying route changes.
 
-```bash
-docker compose -f docker/docker-compose.yml logs -f register_fast_time
-# Look for: Fast Time Server registration complete!
-```
-
-| Resource | URL |
-| --- | --- |
-| MCP endpoint | `http://localhost:8080/contextforge-rs/servers/{virtual_host_id}/mcp` |
-| Local test token helper (requires `with_tools`) | `GET http://localhost:8080/contextforge-rs/admin/tokens/{tenant_id}/{user_id}` |
-| fast_time_server virtual host id | `b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8` |
-
-Production tokens come from the configured trusted issuer. The test-token helper
-is only available in development builds. `/contextforge-rs` selects the external
-dataplane; other MCP routes reach the built-in dataplane.
-
-Teardown: `make compose-down` (stops containers; volumes kept).
+The Compose lifecycle targets are `make docker-prod`, `make compose-up`, and
+`make compose-down`; their names do not imply production readiness. See
+[Deployment](deployment.md#builds-and-images) for the current image boundary.
+The reference nginx listener is `http://localhost:8080`, with external MCP at
+`/contextforge-rs/servers/{virtual_host_id}/mcp`. Other MCP paths reach the
+Python service. `fast_time_server` is a sample backend, not a gateway dependency.
 
 ## cf-integration Conformance
 
 ```bash
-cargo binstall cf-integration@0.1.0 --no-confirm
+cargo binstall cf-integration@0.3.1 --no-confirm
 make conformance
 ```
 
