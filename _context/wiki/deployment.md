@@ -24,7 +24,8 @@ operation. There is no sticky-session requirement. Follow
 
 `GET /contextforge-rs/health` returns HTTP `200` and `{"status":"healthy"}`
 without authentication in every build. It checks HTTP liveness, not Redis,
-JWKS, plugin reload health, or backend readiness. Verify an authenticated routed
+JWKS, plugin reload health, or backend readiness. The reference nginx also
+exposes it at `/health`. Verify an authenticated routed
 request separately when checking deployment readiness.
 
 ## nginx Front-Door Routing
@@ -67,6 +68,8 @@ Build a production binary with bundled plugin factories and without local
 bootstrap helpers:
 
 ```bash
+make docker-prod
+# Equivalent native build:
 cargo build --locked --release -p contextforge-data-plane --features plugins
 ```
 
@@ -74,11 +77,12 @@ That feature compiles factories; `--runtime-plugins-enabled true` and a valid
 Redis plugin document are still required to execute them. Production uses the
 issuer's JWKS endpoint and does not supply a local token-signing private key.
 
-**The current reference `docker/Dockerfile` includes `with_tools`.** The image
-workflow uses that Dockerfile, so its published images and the `docker-prod`
-Compose example are not production-hardened builds. Package the production
-binary above in a deployment image that excludes helpers before using it in a
-real environment. The all-features CI conformance artifact includes helpers too.
+`make docker-prod`, `docker/Dockerfile`, the image publishing workflow, and
+CI's conformance binary build enable production plugin factories without
+`with_tools`. Do not use `--all-features` for production artifacts: it enables
+unauthenticated testing helpers and demo plugins. Set `--jwks-url` or
+`CONTEXTFORGE_DATA_PLANE_JWKS_URL` to the token issuer's HTTPS JWKS endpoint;
+the production dataplane does not receive a signing private key.
 
 The image workflow publishes `ghcr.io/<owner>/contextforge-data-plane:latest`
 and `:v<version>` on pushes to `main`, using the Cargo package version. Repeated

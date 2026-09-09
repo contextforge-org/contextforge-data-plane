@@ -294,7 +294,8 @@ docker compose -f docker/docker-compose-local.yaml exec -T redis \
   }'
 ```
 
-Build and run with demo factories and runtime execution enabled:
+For local testing only, build and run with demo factories, `with_tools` helpers,
+and runtime execution enabled:
 
 ```bash
 cargo run -p contextforge-data-plane \

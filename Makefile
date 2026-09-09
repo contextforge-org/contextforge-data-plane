@@ -16,7 +16,7 @@ DETECT_SECRETS_EXCLUDE := '(?x)(Cargo\.lock$$|\.lock$$)|^\.secrets\.baseline$$'
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
-docker-prod: ## Build production Docker image (contextforge-data-plane:latest) from docker/Dockerfile
+docker-prod: ## Build production Docker image with plugins and without testing-only with_tools
 	docker build -t $(IMAGE_NAME) -f docker/Dockerfile .
 
 compose-up: ## Launch stack: nginx, control plane, redis, postgres, pgbouncer, dataplane, fast_time_server

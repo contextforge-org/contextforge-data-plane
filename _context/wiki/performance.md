@@ -1,7 +1,7 @@
 # Performance and Load Testing
 
 Load testing is owned by [`cf-integration`](https://crates.io/crates/cf-integration).
-The commands below match **0.3.1**, the version pinned by this repository's
+The commands below match **0.3.2**, the version pinned by this repository's
 conformance workflow. The old `scripts/cf-integration.sh` wrapper is no longer
 in this repository.
 
@@ -11,7 +11,7 @@ Use Docker with enough resources for the selected topology. Install the pinned
 CLI and check its command reference:
 
 ```bash
-cargo binstall cf-integration@0.3.1 --no-confirm
+cargo binstall cf-integration@0.3.2 --no-confirm
 cf-integration load --help
 ```
 
@@ -70,7 +70,7 @@ Use equivalent backends, tools, hardware, authentication, policy, cache settings
 and client metadata for comparisons. A full-stack failure while discovering or
 publishing the catalog is a setup failure, not a throughput measurement.
 Standalone measurements omit control-plane publication and must be labeled as
-such. See the [pinned harness documentation](https://github.com/contextforge-org/contextforge-dev-tools/blob/v0.3.1/README.md)
+such. See the [pinned harness documentation](https://github.com/contextforge-org/contextforge-dev-tools/blob/v0.3.2/README.md)
 for topology and source selection.
 
 ## Benchmark Controls

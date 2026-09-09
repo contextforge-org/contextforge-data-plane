@@ -123,7 +123,7 @@ The binary's `with_tools` feature forwards to
 - `GET /contextforge-rs/admin/.well-known/jwks.json`
 - `POST /contextforge-rs/admin/userconfigs/{user_id}`
 
-These routes are registered **outside the authentication middleware** — unauthenticated by design. They exist only for local bootstrap. **Production builds must not enable this feature.** In a real deployment the control plane mints tokens and writes config.
+These routes are registered **outside the authentication middleware** — unauthenticated by design. They exist only for local bootstrap. **Production builds must not enable this feature**, including through `--all-features`. In a real deployment the control plane mints tokens and writes config.
 
 `GET /contextforge-rs/health` is also unauthenticated, but is available in every
 build without `with_tools`. The local token and JWKS helpers use the same RSA

@@ -7,7 +7,7 @@ A change is not done until:
 2. `cargo clippy --locked --workspace --all-targets -- -D warnings` is clean.
 3. `cargo nextest run --locked --workspace --all-features` passes (fallback: `cargo test`).
 4. `cargo deny check advisories bans licenses` passes (CI; pre-commit runs advisories and licenses).
-5. `cargo build --locked --workspace --all-features` succeeds.
+5. `cargo build --locked -p contextforge-data-plane --features plugins` succeeds (production feature selection).
 6. If the change touches the hot path, update the matching wiki page in `_context/wiki/` in the same change.
 
 CI additionally runs `cargo shear --check-test-targets --deny-warnings --locked`

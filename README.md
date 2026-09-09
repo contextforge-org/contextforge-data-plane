@@ -14,9 +14,15 @@ Build the production image and start the supported control-plane + data-plane
 test stack:
 
 ```bash
+export CONTEXTFORGE_DATA_PLANE_JWKS_URL=https://your-issuer.example/.well-known/jwks.json
 make docker-prod
 make compose-up
 ```
+
+Replace the example JWKS URL with the HTTPS endpoint for the issuer of your
+control-plane tokens. The production image includes the plugin factories and
+`/contextforge-rs/health`; it does not include `with_tools`. That feature is for
+testing only and enables unauthenticated token, JWKS, and config helpers.
 
 The stack uses the current `fast_time_server` backend and exercises config
 publication through the external ContextForge control plane. See
@@ -72,29 +78,31 @@ cargo run --release \
   --address 0.0.0.0:8001 \
   --redis-port 6379 \
   --redis-address 127.0.0.1 \
-  --token-verification-public-key assets/jwt.key.pub \
-  --token-verification-private-key assets/jwt.key \
+  --jwks-url "$CONTEXTFORGE_DATA_PLANE_JWKS_URL" \
   --number-of-cpus 16 \
   --redis-mode=plain-text \
   --upstream-connection-mode=plain-text-or-tls \
   --runtime-plugins-enabled true
 ```
 
+### Testing-Only Bootstrap Helpers
+
+For local testing, explicitly enable `with_tools` and use its local JWKS
+endpoint. Never enable this feature or use `--all-features` in production.
 
 ```bash
-cargo run --features contextforge-data-plane-lib/with_tools \
+cargo run -p contextforge-data-plane --features with_tools \
 -- \
---address 0.0.0.0:8080 \
+--address 127.0.0.1:8080 \
 --redis-address 127.0.0.1 \
 --redis-port 6379 \
 --redis-mode plain-text \
 --token-verification-private-key ./assets/jwt.key \
---token-verification-public-key ./assets/jwt.key.pub \
+--jwks-url http://127.0.0.1:8080/contextforge-rs/admin/.well-known/jwks.json \
 --upstream-connection-mode plain-text-or-tls \
---tls-address 0.0.0.0:8443 \
+--tls-address 127.0.0.1:8443 \
 --server-private-key ./assets/tls_key.pem \
 --server-certificate ./assets/tls_certificate.pem
---runtime-plugins-enabled true
 ```
 
 ## Tracing and Metrics

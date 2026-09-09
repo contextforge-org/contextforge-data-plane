@@ -51,6 +51,7 @@ cel = "0.14.5"
 
 [features]
 default = []
+# Testing only: unauthenticated token, JWKS, and config helpers. Health is always available.
 with_tools = ["axum/json", "axum/query"]
 
 

@@ -233,39 +233,51 @@ docker compose -f docker/docker-compose-local.yaml down
 
 ## Full Docker Stack
 
-The repository also contains a full Compose topology with nginx, the Python
-control plane/built-in dataplane, Postgres, Redis, and automatic registration of
-a Fast Time backend. **It needs configuration updates before it is a runnable
-JWKS-based setup.** Use the local Cargo steps above for the working quick start.
+The full Compose topology adds nginx, the Python control plane/built-in
+dataplane, Postgres, Redis, and automatic registration of a Fast Time backend.
+It requires a configured token issuer and compatible control-plane publisher;
+the local Cargo workflow above supplies a self-contained development fixture.
 
-Before using the full topology:
+Set the HTTPS endpoint serving the signing keys for your control-plane tokens,
+then build and start the stack:
 
-- Replace the old token public-key/secret settings with a reachable
-  `CONTEXTFORGE_DATA_PLANE_JWKS_URL` trusted by the Rust service.
-- The current reference image includes `with_tools`, so it also needs an
-  explicit `--token-verification-private-key` path and mounted development key.
-  For production, package a build without helpers instead.
-- Check that the control-plane publisher emits the current backend protocol
-  field and explicit object routes, with keys matching the extracted user ID.
-- Match CPU and memory reservations to the Docker host and account for both
-  publisher and Rust-cache delay when verifying route changes.
+```bash
+export CONTEXTFORGE_DATA_PLANE_JWKS_URL=https://your-issuer.example/.well-known/jwks.json
+make docker-prod
+make compose-up
+```
 
-The Compose lifecycle targets are `make docker-prod`, `make compose-up`, and
-`make compose-down`; their names do not imply production readiness. See
-[Deployment](deployment.md#builds-and-images) for the current image boundary.
-The reference nginx listener is `http://localhost:8080`, with external MCP at
-`/contextforge-rs/servers/{virtual_host_id}/mcp`. Other MCP paths reach the
-Python service. `fast_time_server` is a sample backend, not a gateway dependency.
+Replace the example URL with your issuer's reachable JWKS endpoint. Compose
+passes it to the Rust service. The production image includes plugin factories
+and health, and excludes testing-only `with_tools` helpers and signing-key mounts.
+Obtain bearer tokens through the control plane or configured identity provider.
+
+Check that the publisher emits the backend protocol field and explicit object
+routes with keys matching the extracted user ID. Match resource reservations
+to the Docker host, and account for publisher and Rust-cache delay when verifying
+route changes. See [Deployment](deployment.md#builds-and-images).
+
+The reference nginx listener is `http://localhost:8080`. External MCP uses
+`/contextforge-rs/servers/{virtual_host_id}/mcp`, and health is at `/health` or
+`/contextforge-rs/health`. Other MCP paths reach Python. `fast_time_server` is a
+sample backend, not a gateway dependency.
+
+Stop the stack with `make compose-down`; volumes are kept.
 
 ## cf-integration Conformance
 
+Install the same released harness version used by CI. Conformance and Inspector
+install and run Node/npm only inside Docker images.
+
 ```bash
-cargo binstall cf-integration@0.3.1 --no-confirm
+cargo binstall cf-integration@0.3.2 --no-confirm
 make conformance
 ```
 
 This runs the modern client and modern server eras through the committed
 external-dataplane `HEAD`, including fixture-direct server comparison and the
-scoped client suite. Use `make conformance-bless` to replace all selected
+scoped client suite. It uses the production build without `with_tools`; the
+harness owns JWT signing, loopback JWKS, and Redis fixture publication.
+Use `make conformance-bless` to replace all selected
 baselines transactionally after a fully successful run. Generated checkouts,
 results, reports, and logs stay under `.integration/`.

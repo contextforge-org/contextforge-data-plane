@@ -29,8 +29,10 @@ at the RMCP boundary, so earlier middleware may return first. MCP header budgets
 apply before JWT verification, configuration reads, and body parsing. See
 [Security](security.md#mcp-origin-and-host-validation).
 
-Health and development helper routes are registered outside the MCP auth/config
-layers. MCP handlers consume typed extensions; they do not parse Redis keys.
+Health is registered in every build outside the MCP auth/config layers, while
+token, JWKS, and config helpers are compiled only with testing-only `with_tools`.
+Both remain covered by the outer HTTP tracing and metrics layers. MCP handlers
+consume typed extensions; they do not parse Redis keys.
 `tools/call` also reads the HTTP headers from the request-context `Parts`.
 
 ## Pipeline Shape
