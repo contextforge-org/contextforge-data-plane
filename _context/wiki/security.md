@@ -52,6 +52,10 @@ external-dataplane contract.
 
 ## Transport Security
 
+Rustls uses the AWS-LC crypto provider for downstream TLS, upstream HTTPS,
+Redis TLS, and OTLP TLS. JWT verification also uses AWS-LC. Keep the workspace
+on this single provider to avoid compiling a second crypto implementation.
+
 | Leg | Current posture |
 | --- | --- |
 | Downstream | TLS optional (`--tls-address`, no client auth — identity is the bearer token). Plain HTTP is acceptable only behind a trusted front door on a private network. |

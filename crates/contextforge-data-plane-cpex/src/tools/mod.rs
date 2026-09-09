@@ -4,8 +4,8 @@ use cpex::cpex_core::cmf::{ContentPart, MessagePayload, Role, ToolCall, ToolResu
 use rmcp::{
     ErrorData,
     model::{CallToolRequestParams, CallToolResult, ContentBlock},
-    serde::{Serialize, de::DeserializeOwned},
 };
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
