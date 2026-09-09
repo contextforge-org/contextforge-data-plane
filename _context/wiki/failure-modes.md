@@ -52,8 +52,9 @@ modern routing. A configured backend alone does not make its objects callable.
 
 | Failure | Behavior |
 | --- | --- |
-| Pre-hook denies | MCP error; no upstream call. |
-| Post-hook denies | MCP error; backend operation may already have completed. |
+| MCP pre-hook denies | MCP error; no upstream call. |
+| MCP post-hook denies | MCP error; backend operation may already have completed. |
+| Tool identity or resolved policy context missing | MCP error before backend I/O; no fallback to global policy. |
 | Plugin supplies an error code | That code is used; a denial without one defaults to invalid request `-32600`. |
 | Soft plugin error | Logged; execution can continue under the runtime's soft-error behavior. |
 | Missing or invalid initial plugin config | Runtime initialization fails; gateway startup does not complete. |

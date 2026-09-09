@@ -171,6 +171,7 @@ mod tests {
 
     fn backend(passthrough: &[&str], add: &[(&str, &str)], remove: &[&str]) -> BackendMCPGateway {
         BackendMCPGateway {
+            tool_policy_contexts: std::collections::HashMap::new(),
             name: "b".into(),
             url: "https://upstream.example/mcp".parse().unwrap(),
             mcp_protocol_version: rmcp::model::ProtocolVersion::V_2026_07_28,

@@ -15,7 +15,7 @@ use std::{
 
 use contextforge_data_plane_apis::{
     User,
-    runtime_plugin_config::{RUNTIME_PLUGIN_CONFIG_KEY, RUNTIME_PLUGIN_CONFIG_VERSION},
+    runtime_plugin_config::RUNTIME_PLUGIN_CONFIG_KEY,
     user_store::{BackendMCPGateway, UserConfig, VirtualHost},
 };
 use http::{HeaderMap, HeaderValue};
@@ -373,12 +373,27 @@ async fn write_redis_config(redis_port: u16, backend: &RunningBackend) {
 
     let key = rmp_serde::encode::to_vec(&User::new(TEST_USER_ID)).expect("user key encodes");
     let config = UserConfig {
+        user_email: None,
         virtual_hosts: HashMap::from([(
             TEST_VIRTUAL_HOST_ID.to_owned(),
             VirtualHost {
                 backends: HashMap::from([(
                     "backend".to_owned(),
                     BackendMCPGateway {
+                        tool_policy_contexts: ["sum", "reflect_text"]
+                            .into_iter()
+                            .map(|name| {
+                                (
+                                    name.to_owned(),
+                                    contextforge_data_plane_apis::user_store::ToolPolicyContext {
+                                        id: name.to_owned(),
+                                        name: name.to_owned(),
+                                        team_id: None,
+                                        context_id: TEST_VIRTUAL_HOST_ID.to_owned(),
+                                    },
+                                )
+                            })
+                            .collect(),
                         name: "backend".to_owned(),
                         url: backend.url.parse().expect("backend URL parses"),
                         mcp_protocol_version: rmcp::model::ProtocolVersion::V_2026_07_28,
@@ -414,17 +429,19 @@ async fn write_runtime_plugin_config(redis_port: u16, plugin_config: Value) {
         .get_connection_manager_with_config(ConnectionManagerConfig::default())
         .await
         .expect("redis connection opens");
-    let document = json!({
-        "version": RUNTIME_PLUGIN_CONFIG_VERSION,
-        "cpex": {
+    let mut document = json!({
+        "enabled": true,
+        "contexts": {},
+        "global": {
             "plugins": [{
                 "name": "secrets-detection",
-                "kind": "validator/secrets-detection",
+                "kind": "cpex_secrets_detection.SecretsDetectionPlugin",
                 "hooks": ["cmf.tool_pre_invoke", "cmf.tool_post_invoke"],
                 "config": plugin_config,
             }]
         }
     });
+    document["contexts"][TEST_VIRTUAL_HOST_ID] = document["global"].clone();
     redis::cmd("SET")
         .arg(RUNTIME_PLUGIN_CONFIG_KEY)
         .arg(serde_json::to_vec(&document).expect("runtime plugin config serializes"))

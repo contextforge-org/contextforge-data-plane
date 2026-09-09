@@ -24,7 +24,7 @@ use rmcp::model::{
 use serde_json::{Value, json};
 use tokio::sync::Mutex as TokioMutex;
 
-use contextforge_data_plane_apis::runtime_plugin_config::{RUNTIME_PLUGIN_CONFIG_VERSION, RuntimePluginConfigDocument};
+use contextforge_data_plane_apis::runtime_plugin_config::{RuntimePluginConfigDocument, RuntimePluginSettings};
 
 use crate::config::LoadedRuntimePluginConfig;
 use crate::{ArgumentsUpdate, CmfPluginFactory, PreHookResult, ToolHookState};
@@ -339,9 +339,22 @@ fn progress_event() -> ProgressNotificationParam {
 }
 
 fn config_document(cpex: Value) -> RuntimePluginConfigDocument {
+    let config: CpexConfig = serde_json::from_value(cpex).expect("test CPEX config parses");
+    let mut global = config.clone();
+    let mut scoped = config;
+    for plugin in &mut global.plugins {
+        plugin.hooks.retain(|hook| !hook.contains("tool_"));
+    }
+    global.plugins.retain(|plugin| !plugin.hooks.is_empty());
+    for plugin in &mut scoped.plugins {
+        plugin.hooks.retain(|hook| hook.contains("tool_"));
+    }
+    scoped.plugins.retain(|plugin| !plugin.hooks.is_empty());
     RuntimePluginConfigDocument {
-        version: RUNTIME_PLUGIN_CONFIG_VERSION,
-        cpex: serde_json::from_value(cpex).expect("test CPEX config parses"),
+        enabled: true,
+        global: Some(global),
+        contexts: HashMap::from([("test".to_owned(), scoped)]),
+        settings: RuntimePluginSettings::default(),
     }
 }
 
@@ -398,11 +411,16 @@ async fn missing_runtime_plugin_config_is_rejected_on_initialize() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn invalid_runtime_plugin_config_documents_are_rejected() {
-    for config in [RuntimePluginConfigDocument { version: 2, cpex: CpexConfig::default() }] {
+    for config in [RuntimePluginConfigDocument {
+        enabled: true,
+        global: None,
+        contexts: HashMap::new(),
+        settings: RuntimePluginSettings::default(),
+    }] {
         let runtime = CpexRuntimeRegistry::with_config_store(Arc::new(MemoryConfigStore::with_config(config)));
         let error = runtime.initialize().await.expect_err("invalid config is rejected");
 
-        assert_eq!("runtime plugin config is in wrong format", error.to_string());
+        assert_eq!("runtime plugin config is missing", error.to_string());
     }
 }
 
@@ -411,14 +429,6 @@ async fn unsupported_runtime_plugin_config_is_rejected() {
     for cpex in [
         json!({ "plugin_settings": { "routing_enabled": true }, "plugins": [] }),
         json!({ "plugin_settings": { "fail_on_plugin_error": true }, "plugins": [] }),
-        json!({
-            "plugins": [{
-                "name": "scoped",
-                "kind": "test",
-                "hooks": [cmf_hook_names::TOOL_PRE_INVOKE],
-                "conditions": [{ "tools": ["sum"] }]
-            }]
-        }),
         json!({ "plugins": [{ "name": "llm", "kind": "test", "hooks": [cmf_hook_names::LLM_INPUT] }] }),
     ] {
         let runtime =
@@ -442,7 +452,11 @@ async fn resource_pre_hook_runs_for_a_canonical_uri() {
     let observations = plugin.observations();
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
 
-    runtime.handle().before_read_resource("file:///password.env").await.expect("resource pre hook runs");
+    runtime
+        .handle()
+        .before_read_resource("file:///password.env", test_request_context())
+        .await
+        .expect("resource pre hook runs");
 
     assert_eq!(1, observations.lock().expect("observations lock poisoned").pre_calls);
 }
@@ -453,8 +467,12 @@ async fn resource_without_post_hook_keeps_its_decision_across_reload() {
     let observations = plugin.observations();
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
     runtime.apply_config(None).await.expect("disable hooks");
-    let state = runtime.handle().before_read_resource("file:///password.env").await.expect("request starts");
-    runtime.apply_config(Some(plugin_config(&[plugin]).cpex)).await.expect("enable hooks");
+    let state = runtime
+        .handle()
+        .before_read_resource("file:///password.env", test_request_context())
+        .await
+        .expect("request starts");
+    runtime.apply_config(Some(plugin_config(&[plugin]).global.expect("global policy"))).await.expect("enable hooks");
     let response = ReadResourceResult::new(vec![ResourceContents::text("original", "file:///password.env")]);
     state.after_read_resource(response).await.expect("in-flight decision survives reload");
     assert_eq!(0, observations.lock().expect("observations lock poisoned").post_calls);
@@ -464,7 +482,11 @@ async fn resource_without_post_hook_keeps_its_decision_across_reload() {
 async fn resource_post_hook_keeps_its_runtime_across_reload() {
     let plugin = Arc::new(TestPlugin::new("resource", vec![cmf_hook_names::RESOURCE_POST_FETCH]).with_post_deny());
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
-    let state = runtime.handle().before_read_resource("file:///password.env").await.expect("request starts");
+    let state = runtime
+        .handle()
+        .before_read_resource("file:///password.env", test_request_context())
+        .await
+        .expect("request starts");
     runtime.apply_config(None).await.expect("disable hooks");
     let response = ReadResourceResult::new(vec![ResourceContents::text("secret", "file:///password.env")]);
     let error = state.after_read_resource(response).await.expect_err("captured policy still denies");
@@ -479,7 +501,11 @@ async fn resource_hooks_preserve_context_across_the_backend_call() {
     );
     let observations = plugin.observations();
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
-    let pre = runtime.handle().before_read_resource("file:///password.env").await.expect("resource pre hook runs");
+    let pre = runtime
+        .handle()
+        .before_read_resource("file:///password.env", test_request_context())
+        .await
+        .expect("resource pre hook runs");
     let response = ReadResourceResult::new(vec![ResourceContents::text("secret", "file:///password.env")]);
 
     pre.after_read_resource(response).await.expect("resource post hook receives pre context");
@@ -495,7 +521,10 @@ async fn runtime_config_loads_registered_factory_plugin() {
     let observations = plugin.observations();
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
 
-    let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook runs");
+    let result = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook runs");
 
     assert!(matches!(result.arguments, ArgumentsUpdate::Replace(Some(_))));
     assert_eq!(1, observations.lock().expect("observations lock poisoned").pre_calls);
@@ -516,7 +545,10 @@ async fn runtime_config_loads_generic_cmf_factory_plugin() {
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
-    let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook runs");
+    let result = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook runs");
 
     assert!(matches!(result.arguments, ArgumentsUpdate::Replace(Some(_))));
 }
@@ -538,7 +570,7 @@ async fn generic_cmf_factory_registers_prompt_only_plugin() {
 
     let result = runtime
         .handle()
-        .before_get_prompt(&review_request("weather"), "review", "backend")
+        .before_get_prompt(&review_request("weather"), "review", "backend", test_request_context())
         .await
         .expect("prompt pre hook runs");
 
@@ -563,10 +595,13 @@ async fn generic_cmf_factory_registers_mixed_tool_and_prompt_plugin() {
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
-    let tool = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("tool pre hook runs");
+    let tool = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("tool pre hook runs");
     let prompt = runtime
         .handle()
-        .before_get_prompt(&review_request("weather"), "review", "backend")
+        .before_get_prompt(&review_request("weather"), "review", "backend", test_request_context())
         .await
         .expect("prompt pre hook runs");
 
@@ -585,17 +620,26 @@ async fn runtime_reload_replaces_and_clears_current_runtime() {
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
-    let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook skips");
+    let result = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook skips");
     assert!(matches!(result.arguments, ArgumentsUpdate::Unchanged));
 
     config_store.set_config(plugin_config(&[Arc::clone(&plugin)])).await;
     runtime.reload().await.expect("runtime reloads");
-    let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook runs");
+    let result = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook runs");
     assert!(matches!(result.arguments, ArgumentsUpdate::Replace(Some(_))));
 
     config_store.set_config(config_document(json!({ "plugins": [] }))).await;
     runtime.reload().await.expect("runtime reloads");
-    let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook skips");
+    let result = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook skips");
     assert!(matches!(result.arguments, ArgumentsUpdate::Unchanged));
     assert_eq!(1, observations.lock().expect("observations lock poisoned").pre_calls);
 }
@@ -611,21 +655,35 @@ async fn failed_runtime_reload_rejects_new_calls_until_valid_reload() {
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
-    config_store.set_config(RuntimePluginConfigDocument { version: 2, cpex: CpexConfig::default() }).await;
+    config_store
+        .set_config(RuntimePluginConfigDocument {
+            enabled: true,
+            global: None,
+            contexts: HashMap::new(),
+            settings: RuntimePluginSettings::default(),
+        })
+        .await;
     runtime.reload().await.expect_err("invalid reload fails");
-    let error = expect_runtime_failed(runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await);
+    let error = expect_runtime_failed(
+        runtime.before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context()).await,
+    );
     assert_eq!(ErrorCode::INTERNAL_ERROR, error.code);
     assert_eq!("Runtime plugin reload failed", error.message);
 
     config_store.clear_config().await;
     runtime.reload().await.expect_err("missing reload fails");
-    let error = expect_runtime_failed(runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await);
+    let error = expect_runtime_failed(
+        runtime.before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context()).await,
+    );
     assert_eq!(ErrorCode::INTERNAL_ERROR, error.code);
     assert_eq!("Runtime plugin reload failed", error.message);
 
     config_store.set_config(plugin_config(&[Arc::clone(&plugin)])).await;
     runtime.reload().await.expect("runtime recovers");
-    let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook runs");
+    let result = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook runs");
     assert!(matches!(result.arguments, ArgumentsUpdate::Replace(Some(_))));
     assert_eq!(1, observations.lock().expect("observations lock poisoned").pre_calls);
 }
@@ -644,7 +702,10 @@ async fn combined_plugin_preserves_context_from_pre_to_post_across_replacement()
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook runs");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook runs");
     config_store.set_config(config_document(json!({ "plugins": [] }))).await;
     runtime.reload().await.expect("runtime reloads");
     let response = CallToolResult::success(vec![ContentBlock::text("3")]);
@@ -666,7 +727,10 @@ async fn post_only_runtime_does_not_apply_new_post_hook_to_in_flight_call() {
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook skips");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre hook skips");
     config_store.set_config(plugin_config(&[Arc::clone(&plugin)])).await;
     runtime.reload().await.expect("runtime reloads");
     let response = CallToolResult::success(vec![ContentBlock::text("3")]);
@@ -682,7 +746,10 @@ async fn disabled_runtime_does_not_create_tool_post_state() {
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
 
     runtime.apply_config(None).await.expect("disable hooks");
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("request starts");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("request starts");
 
     assert!(pre.state.is_none());
     assert_eq!(0, observations.lock().expect("observations lock poisoned").post_calls);
@@ -694,7 +761,10 @@ async fn stream_event_is_rewritten_by_post_hook() {
     let observations = plugin.observations();
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
 
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre state is created");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre state is created");
     let event = pre.state.expect("post state").after_stream_event(progress_event()).await.expect("event passes");
 
     assert_eq!(Some("plugin:step 1/2"), event.expect("event is kept").message.as_deref());
@@ -706,7 +776,10 @@ async fn denied_stream_event_is_dropped() {
     let plugin = Arc::new(TestPlugin::new("post", vec![cmf_hook_names::TOOL_POST_INVOKE]).with_post_deny());
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
 
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre state is created");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre state is created");
     let event =
         pre.state.expect("post state").after_stream_event(progress_event()).await.expect("deny drops the event");
 
@@ -719,7 +792,10 @@ async fn invalid_stream_event_rewrite_is_rejected() {
         Arc::new(TestPlugin::new("post", vec![cmf_hook_names::TOOL_POST_INVOKE]).with_invalid_stream_rewrite());
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
 
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre state is created");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("pre state is created");
     let error = pre
         .state
         .expect("post state")
@@ -768,16 +844,22 @@ async fn watcher_applies_config_changes() {
 
     config_store.set_config(plugin_config(&[Arc::clone(&plugin)])).await;
     for _ in 0..TEST_WATCHER_RETRY_COUNT {
-        let result = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("pre hook runs");
+        let result = runtime
+            .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+            .await
+            .expect("pre hook runs");
         if matches!(result.arguments, ArgumentsUpdate::Replace(Some(_))) {
             config_store.clear_config().await;
             tokio::time::sleep(TEST_WATCHER_INTERVAL + TEST_WATCHER_RETRY_INTERVAL).await;
-            let error = expect_runtime_failed(runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await);
+            let error = expect_runtime_failed(
+                runtime.before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context()).await,
+            );
             assert_eq!(ErrorCode::INTERNAL_ERROR, error.code);
 
             config_store.set_config(plugin_config(&[Arc::clone(&plugin)])).await;
             for _ in 0..TEST_WATCHER_RETRY_COUNT {
-                if let Ok(result) = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await
+                if let Ok(result) =
+                    runtime.before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context()).await
                     && matches!(result.arguments, ArgumentsUpdate::Replace(Some(_)))
                 {
                     assert_eq!(2, observations.lock().expect("observations lock poisoned").pre_calls);
@@ -816,8 +898,9 @@ impl CpexRuntimeRegistry {
         request: &CallToolRequestParams,
         tool_name: &str,
         backend_name: &str,
+        context: crate::PluginRequestContext,
     ) -> Result<PreHookResult<ToolHookState>, ErrorData> {
-        self.handle().before_tool_call(request, tool_name, backend_name).await
+        self.handle().before_tool_call(request, tool_name, backend_name, context).await
     }
 
     async fn after_tool_call(
@@ -864,7 +947,10 @@ async fn hook_combinations_preserve_correlation_for_each_operation() {
 
             match operation {
                 Operation::Tool => {
-                    let pre = handle.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("tool starts");
+                    let pre = handle
+                        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+                        .await
+                        .expect("tool starts");
                     assert_eq!(post_enabled, pre.state.is_some());
                     if let Some(state) = pre.state {
                         state.after_tool_call(CallToolResult::success(vec![])).await.expect("tool finishes");
@@ -872,7 +958,7 @@ async fn hook_combinations_preserve_correlation_for_each_operation() {
                 },
                 Operation::Prompt => {
                     let pre = handle
-                        .before_get_prompt(&review_request("weather"), "review", "backend")
+                        .before_get_prompt(&review_request("weather"), "review", "backend", test_request_context())
                         .await
                         .expect("prompt starts");
                     assert_eq!(post_enabled, pre.state.is_some());
@@ -887,7 +973,10 @@ async fn hook_combinations_preserve_correlation_for_each_operation() {
                     }
                 },
                 Operation::Resource => {
-                    let state = handle.before_read_resource("file:///test").await.expect("resource starts");
+                    let state = handle
+                        .before_read_resource("file:///test", test_request_context())
+                        .await
+                        .expect("resource starts");
                     state
                         .after_read_resource(ReadResourceResult::new(vec![ResourceContents::text(
                             "weather",
@@ -922,11 +1011,12 @@ async fn prompt_context_and_policy_survive_a_failed_reload() {
     runtime.initialize().await.expect("runtime initializes");
     let handle = runtime.handle();
     let request = review_request("weather");
-    let pre = handle.before_get_prompt(&request, "review", "backend").await.expect("prompt starts");
+    let pre =
+        handle.before_get_prompt(&request, "review", "backend", test_request_context()).await.expect("prompt starts");
     config_store.clear_config().await;
     runtime.reload().await.expect_err("missing config fails reload");
-    assert!(handle.before_get_prompt(&request, "review", "backend").await.is_err());
-    assert!(handle.before_read_resource("file:///test").await.is_err());
+    assert!(handle.before_get_prompt(&request, "review", "backend", test_request_context()).await.is_err());
+    assert!(handle.before_read_resource("file:///test", test_request_context()).await.is_err());
     pre.state
         .expect("prompt state")
         .after_get_prompt(GetPromptResult::new(vec![PromptMessage::new_text(Role::User, "weather")]))
@@ -943,7 +1033,10 @@ async fn concurrent_tool_events_share_context_with_the_final_response_after_relo
     plugin.post_behavior = PostBehavior::CountEvents;
     let plugin = Arc::new(plugin);
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("tool starts");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("tool starts");
     let state = pre.state.expect("tool state");
     runtime.apply_config(None).await.expect("disable hooks for new calls");
     let (first, second) =
@@ -958,7 +1051,10 @@ async fn concurrent_tool_events_share_context_with_the_final_response_after_relo
 async fn dropping_the_last_in_flight_state_releases_the_replaced_runtime() {
     let plugin = Arc::new(TestPlugin::new("pending", vec![cmf_hook_names::TOOL_POST_INVOKE]));
     let runtime = runtime_with_plugin(&plugin, plugin_config(&[Arc::clone(&plugin)])).await;
-    let pre = runtime.before_tool_call(&sum_request(1, 2), "sum", "backend").await.expect("tool starts");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("tool starts");
     let state = pre.state.expect("tool state");
     let event_state = state.clone();
     runtime.apply_config(None).await.expect("replace runtime");
@@ -973,4 +1069,54 @@ async fn dropping_the_last_in_flight_state_releases_the_replaced_runtime() {
         tokio::time::sleep(TEST_SHUTDOWN_RETRY_INTERVAL).await;
     }
     panic!("abandoned request retained its runtime");
+}
+
+fn test_request_context() -> crate::PluginRequestContext {
+    crate::PluginRequestContext {
+        tool: Some(ToolPolicyContext {
+            id: "test".to_owned(),
+            name: "sum".to_owned(),
+            team_id: None,
+            context_id: "test".to_owned(),
+        }),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn published_hook_policy_controls_payload_writes_without_skipping_execution() {
+    use contextforge_data_plane_apis::runtime_plugin_config::HookPayloadPolicy;
+    let plugin = Arc::new(TestPlugin::new("policy", vec![cmf_hook_names::TOOL_PRE_INVOKE]).with_pre_rewrite());
+    let mut config = plugin_config(&[Arc::clone(&plugin)]);
+    config.settings.default_hook_policy = "deny".to_owned();
+    let runtime = runtime_with_plugin(&plugin, config.clone()).await;
+    let request = sum_request(1, 2);
+    let pre =
+        runtime.before_tool_call(&request, "sum", "backend", test_request_context()).await.expect("hook executes");
+    assert!(matches!(pre.arguments, ArgumentsUpdate::Unchanged));
+    assert_eq!(plugin.observations.lock().expect("observations").pre_calls, 1);
+
+    config
+        .settings
+        .hook_policies
+        .insert("tool_pre_invoke".to_owned(), HookPayloadPolicy { writable_fields: ["args".to_owned()].into() });
+    runtime.apply_document(config).await.expect("allow argument edits");
+    let pre =
+        runtime.before_tool_call(&request, "sum", "backend", test_request_context()).await.expect("hook executes");
+    assert!(matches!(pre.arguments, ArgumentsUpdate::Replace(Some(_))));
+}
+
+#[tokio::test]
+async fn explicitly_disabled_plugins_do_not_require_a_factory() {
+    let config = config_document(json!({"plugins": [{
+        "name": "disabled", "kind": "unavailable", "mode": "disabled", "hooks": ["tool_pre_invoke"],
+    }]}));
+    let runtime = CpexRuntimeRegistry::with_config_store(Arc::new(MemoryConfigStore::with_config(config)));
+    runtime.initialize().await.expect("disabled plugin does not load");
+    let pre = runtime
+        .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
+        .await
+        .expect("call allowed");
+    assert!(pre.state.is_none());
+    assert!(matches!(pre.arguments, ArgumentsUpdate::Unchanged));
 }

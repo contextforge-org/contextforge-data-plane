@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -7,6 +8,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
+use contextforge_data_plane_apis::{runtime_plugin_config::RuntimePluginConfigDocument, user_store::ToolPolicyContext};
 use cpex::cpex_core::{
     config::CpexConfig,
     factory::{PluginFactory, PluginFactoryRegistry},
@@ -15,13 +17,13 @@ use rmcp::{ErrorData, model::ErrorCode};
 use tokio::task::JoinHandle;
 
 use crate::{
-    config::{RedisRuntimePluginConfigStore, RuntimePluginConfigStore, cpex_config},
+    config::{RedisRuntimePluginConfigStore, RuntimePluginConfigStore},
     error::GatewayPluginRuntimeError,
     hooks::RuntimeHookError,
     runtime::GatewayPluginRuntime,
 };
 
-const DEFAULT_CONFIG_WATCHER_INTERVAL: Duration = Duration::from_mins(10);
+const DEFAULT_CONFIG_WATCHER_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct CpexRuntimeRegistry {
     runtime: Arc<ArcSwap<RuntimeState>>,
@@ -37,14 +39,36 @@ pub struct GatewayPluginRuntimeHandle {
 }
 
 enum RuntimeState {
-    Active(Arc<GatewayPluginRuntime>),
+    Active(Arc<RuntimePolicies>),
     Failed(String),
+}
+
+#[derive(Default)]
+pub(crate) struct RuntimePolicies {
+    pub(crate) global: Arc<GatewayPluginRuntime>,
+    contexts: HashMap<String, Arc<GatewayPluginRuntime>>,
+    scoped: bool,
+}
+
+impl RuntimePolicies {
+    pub(crate) fn tool(&self, tool: Option<&ToolPolicyContext>) -> Result<Arc<GatewayPluginRuntime>, ErrorData> {
+        if !self.scoped {
+            return Ok(Arc::clone(&self.global));
+        }
+        let tool = tool
+            .filter(|tool| !tool.id.is_empty() && !tool.name.is_empty() && !tool.context_id.is_empty())
+            .ok_or_else(|| ErrorData::internal_error("Runtime plugin tool context is missing", None))?;
+        self.contexts
+            .get(&tool.context_id)
+            .cloned()
+            .ok_or_else(|| ErrorData::internal_error("Runtime plugin policy context is missing", None))
+    }
 }
 
 impl Default for CpexRuntimeRegistry {
     fn default() -> Self {
         Self {
-            runtime: Arc::new(ArcSwap::from_pointee(RuntimeState::Active(Arc::new(GatewayPluginRuntime::default())))),
+            runtime: Arc::new(ArcSwap::from_pointee(RuntimeState::Active(Arc::new(RuntimePolicies::default())))),
             config_store: None,
             factories: Arc::new(PluginFactoryRegistry::new()),
             watcher_started: AtomicBool::new(false),
@@ -74,6 +98,10 @@ impl CpexRuntimeRegistry {
 
     pub async fn apply_config(&self, config: Option<CpexConfig>) -> Result<(), GatewayPluginRuntimeError> {
         apply_runtime_config(&self.runtime, &self.factories, config).await
+    }
+
+    pub async fn apply_document(&self, document: RuntimePluginConfigDocument) -> Result<(), GatewayPluginRuntimeError> {
+        apply_document(&self.runtime, &self.factories, document).await
     }
 
     pub fn handle(&self) -> GatewayPluginRuntimeHandle {
@@ -123,7 +151,7 @@ async fn reload_runtime(
         if last_applied_config == Some(config.fingerprint.as_slice()) {
             return Ok(None);
         }
-        apply_runtime_config(runtime, factories, Some(cpex_config(&config.document)?)).await?;
+        apply_document(runtime, factories, config.document).await?;
         Ok(Some(config.fingerprint))
     }
     .await;
@@ -139,14 +167,35 @@ async fn apply_runtime_config(
     config: Option<CpexConfig>,
 ) -> Result<(), GatewayPluginRuntimeError> {
     let Some(config) = config else {
-        drop(runtime.swap(Arc::new(RuntimeState::Active(Arc::new(GatewayPluginRuntime::default())))));
+        drop(runtime.swap(Arc::new(RuntimeState::Active(Arc::new(RuntimePolicies::default())))));
         return Ok(());
     };
-    drop(
-        runtime.swap(Arc::new(RuntimeState::Active(Arc::new(
-            GatewayPluginRuntime::from_config(config, factories).await?,
-        )))),
-    );
+    drop(runtime.swap(Arc::new(RuntimeState::Active(Arc::new(RuntimePolicies {
+        global: Arc::new(GatewayPluginRuntime::from_config(config, factories).await?),
+        ..Default::default()
+    })))));
+    Ok(())
+}
+
+async fn apply_document(
+    runtime: &ArcSwap<RuntimeState>,
+    factories: &PluginFactoryRegistry,
+    document: RuntimePluginConfigDocument,
+) -> Result<(), GatewayPluginRuntimeError> {
+    if !document.enabled {
+        return apply_runtime_config(runtime, factories, None).await;
+    }
+    let global = document.global.ok_or(GatewayPluginRuntimeError::ConfigMissing)?;
+    let global = Arc::new(GatewayPluginRuntime::from_published_config(global, &document.settings, factories).await?);
+    let mut contexts = HashMap::new();
+    for (key, config) in document.contexts {
+        if key.is_empty() {
+            return Err(GatewayPluginRuntimeError::ConfigWrongFormat);
+        }
+        let policy = GatewayPluginRuntime::from_published_config(config, &document.settings, factories).await?;
+        contexts.insert(key, Arc::new(policy));
+    }
+    drop(runtime.swap(Arc::new(RuntimeState::Active(Arc::new(RuntimePolicies { global, contexts, scoped: true })))));
     Ok(())
 }
 
@@ -162,7 +211,7 @@ impl CpexRuntimeRegistry {
 }
 
 impl GatewayPluginRuntimeHandle {
-    pub(crate) fn current(&self) -> Result<Arc<GatewayPluginRuntime>, ErrorData> {
+    pub(crate) fn current(&self) -> Result<Arc<RuntimePolicies>, ErrorData> {
         match self.runtime.load().as_ref() {
             RuntimeState::Active(runtime) => Ok(Arc::clone(runtime)),
             RuntimeState::Failed(error) => {

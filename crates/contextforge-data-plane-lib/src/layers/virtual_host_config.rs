@@ -54,6 +54,7 @@ mod tests {
 
     fn user_config_with_virtual_host(virtual_host_id: &str) -> UserConfig {
         UserConfig {
+            user_email: None,
             virtual_hosts: HashMap::from([(
                 virtual_host_id.to_owned(),
                 VirtualHost {

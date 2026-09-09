@@ -38,6 +38,17 @@ pub struct BackendMCPGateway {
     /// Input schemas keyed by the original upstream tool name.
     #[serde(default)]
     pub tool_schemas: HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    /// Canonical tool identity and resolved policy key, indexed by upstream name.
+    #[serde(default)]
+    pub tool_policy_contexts: HashMap<String, ToolPolicyContext>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct ToolPolicyContext {
+    pub id: String,
+    pub name: String,
+    pub team_id: Option<String>,
+    pub context_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -62,4 +73,6 @@ pub struct VirtualHost {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct UserConfig {
     pub virtual_hosts: HashMap<VirtualHostId, VirtualHost>,
+    #[serde(default)]
+    pub user_email: Option<String>,
 }

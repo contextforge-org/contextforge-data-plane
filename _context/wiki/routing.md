@@ -66,7 +66,9 @@ validation.
 tool/prompt arguments or the resource URI. Resource URI edits must resolve through
 the caller's published routes. Post-hooks can rewrite or reject the response.
 
-The handle selects a runtime before backend I/O. It returns typed request state
+Tools select their published tool/team policy before backend I/O; prompts and
+resources select the global policy. The host supplies verified identity and
+canonical route metadata to each hook. It returns typed request state
 whose `after_*` method runs the post-hook on that same runtime, even after a reload
 or a reload failure. A request that started without post-hooks never gains one
 mid-flight. Tool state is shared under a mutex so progress notifications and the

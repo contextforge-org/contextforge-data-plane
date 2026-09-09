@@ -1,5 +1,6 @@
 mod completion;
 mod initialization;
+mod plugin_context;
 mod prompts;
 mod resources;
 mod tools;

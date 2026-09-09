@@ -110,6 +110,7 @@ async fn start_counter_gateway_inner(
         .set_config(
             &User::new(user),
             &UserConfig {
+                user_email: None,
                 virtual_hosts: HashMap::from([(
                     VIRTUAL_HOST_ID.to_owned(),
                     VirtualHost { backends, tools, resources, resource_templates: HashMap::new(), prompts },
@@ -165,6 +166,7 @@ fn backend_config(
     protocol_version: rmcp::model::ProtocolVersion,
 ) -> BackendMCPGateway {
     BackendMCPGateway {
+        tool_policy_contexts: std::collections::HashMap::new(),
         name: backend_id.to_owned(),
         url,
         mcp_protocol_version: protocol_version,

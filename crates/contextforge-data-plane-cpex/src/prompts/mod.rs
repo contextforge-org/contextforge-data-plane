@@ -14,7 +14,7 @@ use rmcp::{
 use serde_json::{Map, Value};
 
 use crate::{
-    ArgumentsUpdate, GatewayPluginRuntimeHandle, PreHookResult,
+    ArgumentsUpdate, GatewayPluginRuntimeHandle, PluginRequestContext, PreHookResult,
     cmf::{CmfResponse, Operation, message_payload},
     runtime::CallState,
 };
@@ -241,12 +241,14 @@ impl GatewayPluginRuntimeHandle {
         request: &GetPromptRequestParams,
         prompt_name: &str,
         backend_name: &str,
+        context: PluginRequestContext,
     ) -> Result<PreHookResult<PromptHookState>, ErrorData> {
         let (arguments, state) = self
             .current()?
+            .global
             .before(
-                Operation::Prompt,
-                prompt_name,
+                (Operation::Prompt, prompt_name),
+                context.extensions,
                 |id| prompt_request_payload(request, prompt_name, backend_name, id),
                 |payload, id| {
                     let arguments =

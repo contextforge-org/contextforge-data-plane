@@ -7,10 +7,7 @@ use redis::{
 use tokio::sync::Mutex;
 
 use crate::error::GatewayPluginRuntimeError;
-use contextforge_data_plane_apis::runtime_plugin_config::{
-    RUNTIME_PLUGIN_CONFIG_KEY, RUNTIME_PLUGIN_CONFIG_VERSION, RuntimePluginConfigDocument,
-};
-use cpex::cpex_core::config::CpexConfig;
+use contextforge_data_plane_apis::runtime_plugin_config::{RUNTIME_PLUGIN_CONFIG_KEY, RuntimePluginConfigDocument};
 
 #[async_trait]
 pub(crate) trait RuntimePluginConfigStore: Send + Sync {
@@ -69,13 +66,6 @@ impl RuntimePluginConfigStore for RedisRuntimePluginConfigStore {
     }
 }
 
-pub(crate) fn cpex_config(document: &RuntimePluginConfigDocument) -> Result<CpexConfig, GatewayPluginRuntimeError> {
-    if document.version != RUNTIME_PLUGIN_CONFIG_VERSION {
-        return Err(GatewayPluginRuntimeError::ConfigWrongFormat);
-    }
-    Ok(document.cpex.clone())
-}
-
 pub(crate) fn decode_config_document(config: &[u8]) -> Result<RuntimePluginConfigDocument, GatewayPluginRuntimeError> {
     serde_json::from_slice::<RuntimePluginConfigDocument>(config)
         .or_else(|_| rmp_serde::decode::from_slice::<RuntimePluginConfigDocument>(config))
@@ -84,32 +74,28 @@ pub(crate) fn decode_config_document(config: &[u8]) -> Result<RuntimePluginConfi
 
 #[cfg(test)]
 mod tests {
-    use cpex::cpex_core::config::CpexConfig;
-
-    use contextforge_data_plane_apis::runtime_plugin_config::RuntimePluginConfigDocument;
-
-    use super::{cpex_config, decode_config_document};
+    use super::decode_config_document;
 
     #[test]
     fn decode_config_document_accepts_json_bytes() {
-        let document = br#" { "version": 1, "cpex": { "plugins": [] } }"#;
+        let document = br#" { "enabled": true, "global": { "plugins": null }, "contexts": {} }"#;
 
         let document = decode_config_document(document).expect("JSON document decodes");
 
-        assert!(cpex_config(&document).expect("config version is valid").plugins.is_empty());
+        assert!(document.global.expect("global config exists").plugins.is_empty());
     }
 
     #[test]
     fn decode_config_document_accepts_messagepack_bytes() {
-        let expected = RuntimePluginConfigDocument { version: 1, cpex: CpexConfig::default() };
+        let expected = serde_json::json!({"enabled": true, "global": {"plugins": []}, "contexts": {}});
         let document = rmp_serde::to_vec_named(&expected).expect("MessagePack document encodes");
 
-        assert!(cpex_config(&decode_config_document(&document).expect("MessagePack document decodes")).is_ok());
+        assert!(decode_config_document(&document).expect("MessagePack document decodes").enabled);
     }
 
     #[test]
-    fn decode_config_document_rejects_missing_cpex_config() {
-        let error = decode_config_document(br#"{ "version": 1 }"#).expect_err("missing CPEX config is rejected");
+    fn decode_config_document_rejects_missing_configuration() {
+        let error = decode_config_document(br#"{ "enabled": true }"#).expect_err("missing config is rejected");
 
         assert_eq!("runtime plugin config is in wrong format", error.to_string());
     }

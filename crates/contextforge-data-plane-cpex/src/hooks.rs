@@ -1,4 +1,14 @@
+use contextforge_data_plane_apis::user_store::ToolPolicyContext;
+use cpex::cpex_core::hooks::Extensions;
 use serde_json::{Map, Value};
+
+/// Host-authored context from the authorized route and verified request.
+/// Client metadata and plugin state never select a policy or establish identity.
+#[derive(Default)]
+pub struct PluginRequestContext {
+    pub tool: Option<ToolPolicyContext>,
+    pub extensions: Extensions,
+}
 
 pub type RuntimeHookError = Box<dyn std::error::Error + Send + Sync + 'static>;
 

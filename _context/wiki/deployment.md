@@ -60,7 +60,7 @@ configuration-cache freshness and dependency availability.
 - A missing entry or Redis GET error currently produces HTTP `400`; undecodable
   configuration produces `500`. See [Failure Modes](failure-modes.md).
 - Enabled CPEX also needs its initial plugin document and checks for reloads
-  every ten minutes. An invalid reload fails new plugin calls closed.
+  every 30 seconds. An invalid reload fails new plugin calls closed.
 
 ## Builds and Images
 
@@ -113,7 +113,7 @@ publisher interval + user-config cache expiry + publication/read latency
 The Rust cache defaults to 60 seconds; check the deployed publisher's actual
 interval. For functional tests, shorten publication and use cache expiry `0`.
 For benchmarks, report both values and keep them consistent between runs.
-CPEX reloads use a separate ten-minute interval.
+CPEX reloads use a separate 30-second interval.
 
 ## Security Posture
 

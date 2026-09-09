@@ -66,7 +66,7 @@ Activation requires all three pieces:
 - Runtime flag: `--runtime-plugins-enabled true`
 - Redis config key: `ContextForgeGatewayRuntimePluginConfig`
 
-The plugin kind is `validator/secrets-detection`. The dataplane wires CMF hooks
+The plugin kind is `cpex_secrets_detection.SecretsDetectionPlugin`. The dataplane wires CMF hooks
 for tool calls, prompt fetches, and resource reads.
 
 Example run command:

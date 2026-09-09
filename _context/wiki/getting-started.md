@@ -40,20 +40,27 @@ secrets detection before and after tool calls, blocking detected secrets:
 ```bash
 docker compose -f docker/docker-compose-local.yaml exec -T redis \
   redis-cli SET ContextForgeGatewayRuntimePluginConfig '{
-    "version": 1,
-    "cpex": {
-      "plugins": [{
-        "name": "secrets-detection",
-        "kind": "validator/secrets-detection",
-        "hooks": ["cmf.tool_pre_invoke", "cmf.tool_post_invoke"],
-        "config": {"block_on_detection": true}
-      }]
+    "enabled": true,
+    "global": {"plugins": []},
+    "contexts": {
+      "quickstart-counter": {
+        "plugins": [{
+          "name": "secrets-detection",
+          "kind": "cpex_secrets_detection.SecretsDetectionPlugin",
+          "hooks": ["cmf.tool_pre_invoke", "cmf.tool_post_invoke"],
+          "config": {"block_on_detection": true}
+        }]
+      }
     }
   }' NX
 ```
 
 `NX` preserves an existing plugin document. `OK` means the example was inserted;
-an empty reply means an existing document remains in use. Its plugin kinds must
+an empty reply means an existing document remains in use. Existing documents must
+use the unversioned `enabled`/`global`/`contexts` format and include the tool policy
+selected by the routes below; the former `version`/`cpex` format is no longer
+accepted. The `quickstart-counter` key is a local example, paired with the
+backend's `tool_policy_contexts.get_value.context_id` in step 5. Plugin kinds must
 be compiled into the binary. See [Plugin Config](config.md#plugin-config-redis-key-contextforgegatewayruntimepluginconfig)
 for configuration and the optional [demo plugins](config.md#demo-plugin-workflow).
 
@@ -127,7 +134,15 @@ curl --fail --silent --show-error --request POST \
             "name": "gateway-one",
             "url": "http://127.0.0.1:5555/mcp",
             "mcp_protocol_version": "2026-07-28",
-            "passthrough_headers": []
+            "passthrough_headers": [],
+            "tool_policy_contexts": {
+              "get_value": {
+                "id": "counter-get-value",
+                "name": "counter-get_value",
+                "team_id": "team_awesome",
+                "context_id": "quickstart-counter"
+              }
+            }
           }
         },
         "tools": {
@@ -144,6 +159,8 @@ curl --fail --silent --show-error --request POST \
 Expect `Added` (HTTP `202`). The `USER_ID` must match the token's `sub`.
 The backend protocol version and explicit tool route are required for the tool
 call below. The public tool name maps to the backend's original `get_value`.
+Its policy context selects the secrets-detection configuration seeded in step 2;
+tool calls do not fall back to `global` when that context is missing.
 
 ### 6. Discover the server and call the counter
 
@@ -219,6 +236,7 @@ tool name directly instead of expecting `tools/list` here.
 | `404 {"detail":"Server not found"}` | The URL's virtual-host ID must exist in that user's config. |
 | `400` mentioning request metadata | Include the matching MCP protocol header, method/name headers, and per-request `_meta`. |
 | MCP error for an unpublished tool | Add the tool's explicit route to the virtual host before calling it. |
+| `Runtime plugin tool context is missing` / `Runtime plugin policy context is missing` | Publish the backend's tool identity and a matching entry in the plugin document's `contexts`; `global` alone does not configure tool policies. |
 | Backend unavailable | Check `gateway-one` logs, port `5555`, and `--upstream-connection-mode plain-text-or-tls`. |
 
 For JWT diagnostics, restart with `RUST_LOG=debug` and look for

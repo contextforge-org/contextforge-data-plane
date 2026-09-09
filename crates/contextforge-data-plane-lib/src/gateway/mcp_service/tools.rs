@@ -54,7 +54,14 @@ pub(super) async fn call_tool(
     }
 
     let pre_result = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
-        plugin_runtime.before_tool_call(&request, &tool_name, &backend_name).await?
+        plugin_runtime
+            .before_tool_call(
+                &request,
+                &tool_name,
+                &backend_name,
+                super::plugin_context::request_context(&cx, "tool", &tool_name, &backend_name, backend)?,
+            )
+            .await?
     } else {
         PreHookResult::default()
     };

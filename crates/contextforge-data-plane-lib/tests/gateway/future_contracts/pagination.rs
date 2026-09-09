@@ -34,6 +34,7 @@ async fn start_paginating_gateway(backend_count: usize) -> Result<GatewayFixture
         backends.insert(
             backend_id,
             BackendMCPGateway {
+                tool_policy_contexts: std::collections::HashMap::new(),
                 name: format!("paginating-backend-{backend_number}"),
                 url: server.url("/mcp").parse().expect("backend URL"),
                 mcp_protocol_version: rmcp::model::ProtocolVersion::V_2026_07_28,
@@ -52,6 +53,7 @@ async fn start_paginating_gateway(backend_count: usize) -> Result<GatewayFixture
         .set_config(
             &User::new(TEST_USER_ID),
             &UserConfig {
+                user_email: None,
                 virtual_hosts: HashMap::from([(
                     VIRTUAL_HOST_ID.to_owned(),
                     VirtualHost {

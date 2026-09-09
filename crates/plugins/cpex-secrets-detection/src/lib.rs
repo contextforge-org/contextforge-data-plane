@@ -21,7 +21,7 @@ pub mod config;
 pub mod patterns;
 pub mod scanner;
 
-pub const KIND: &str = "validator/secrets-detection";
+pub const KIND: &str = "cpex_secrets_detection.SecretsDetectionPlugin";
 const VIOLATION_CODE: &str = "SECRETS_DETECTED";
 const MAX_SECRET_TYPES: usize = 32;
 
@@ -658,7 +658,7 @@ mod tests {
         format!(
             r#"plugins:
   - name: secrets-detection
-    kind: validator/secrets-detection
+    kind: cpex_secrets_detection.SecretsDetectionPlugin
     hooks: ["{hook}"]
     mode: sequential
 {config}"#

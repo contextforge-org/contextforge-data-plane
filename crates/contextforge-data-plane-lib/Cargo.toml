@@ -14,6 +14,7 @@ repository.workspace = true
 [dependencies]
 contextforge-data-plane-apis.workspace = true
 contextforge-data-plane-cpex.workspace = true
+cpex.workspace = true
 rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -59,7 +60,6 @@ with_tools = ["axum/json", "axum/query"]
 [dev-dependencies]
 axum = { workspace = true, features = ["json"] }
 opentelemetry_sdk.workspace = true
-cpex.workspace = true
 rmcp = { workspace = true, features = ["macros"] }
 test-log = "0.2.21"
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }

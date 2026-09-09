@@ -37,7 +37,14 @@ pub(super) async fn get_prompt(
         data: None,
     })?;
     let pre_result = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
-        plugin_runtime.before_get_prompt(&request, &prompt_name, &backend_name).await?
+        plugin_runtime
+            .before_get_prompt(
+                &request,
+                &prompt_name,
+                &backend_name,
+                super::plugin_context::request_context(&cx, "prompt", &prompt_name, &backend_name, backend)?,
+            )
+            .await?
     } else {
         PreHookResult::default()
     };

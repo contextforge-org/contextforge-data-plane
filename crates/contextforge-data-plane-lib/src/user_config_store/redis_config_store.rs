@@ -185,7 +185,7 @@ mod tests {
     use super::*;
 
     fn empty_config() -> UserConfig {
-        UserConfig { virtual_hosts: HashMap::new() }
+        UserConfig { user_email: None, virtual_hosts: HashMap::new() }
     }
 
     fn instant_ago(duration: Duration) -> Instant {

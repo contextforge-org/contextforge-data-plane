@@ -139,6 +139,7 @@ the dataplane after removing a key if that cache must be cleared immediately.
 ```text
 UserConfig
   virtual_hosts: HashMap<String, VirtualHost>
+  user_email: String | null                   ← optional control-plane user name
 
 VirtualHost
   backends: HashMap<String, BackendMCPGateway>  ← backend key, not a parsed prefix
@@ -160,6 +161,13 @@ BackendMCPGateway
   remove_headers: Vec<String>                  ← defaults to []
   completion: HashMap<String, String>          ← defaults to {}; completion is not implemented
   tool_schemas: HashMap<String, JsonObject>    ← defaults to {}; upstream tool name → schema
+  tool_policy_contexts: HashMap<String, ToolPolicyContext> ← upstream tool name → identity/policy
+
+ToolPolicyContext
+  id: String                                 ← canonical tool ID
+  name: String                               ← canonical gateway tool name
+  team_id: String | null                      ← owning team
+  context_id: String                          ← key in plugin document contexts
 ```
 
 The virtual-host object maps default to empty. A backend must be referenced by
@@ -219,16 +227,69 @@ cargo run -p contextforge-data-plane-apis
 
 ```text
 RuntimePluginConfigDocument
-  version: 1
-  cpex: CpexConfig
+  enabled: bool
+  global: CpexConfig | null
+  contexts: HashMap<String, CpexConfig>
+  settings: runtime execution settings
 ```
 
-Supported: tool, prompt, and resource pre/post CMF hooks.
-Rejected: routing-based selection, routes, plugin directories, global policies/defaults,
-`plugin_settings.fail_on_plugin_error`, plugin conditions, and unsupported hooks
-(including LLM hooks).
-Config validation and `CmfPluginFactory` registration must agree on that list: a hook accepted by validation but not registered leaves the plugin loaded and silently inert.
-Reload watcher: 10-minute interval. Invalid reload → runtime marked failed.
+The unversioned document is published by the control plane in MessagePack;
+JSON is also accepted. Python `plugins: null` means an empty plugin list.
+Native hook names such as `tool_pre_invoke` are mapped to CPEX CMF handlers.
+The secrets-detection factory uses the publisher's
+`cpex_secrets_detection.SecretsDetectionPlugin` kind.
+
+Tools select the resolved configuration using
+`backend.tool_policy_contexts[upstream_name].context_id`. The entry also carries
+the tool's canonical `id`, gateway `name`, and owning `team_id`. Aliases select
+the same upstream tool context. With plugins enabled, a missing tool identity or
+policy context fails the call before backend I/O; it never falls back to global
+policy. Prompts and resources use `global`, matching the built-in
+resolver, which only applies database bindings to team/tool context keys.
+All targets use the same policy resolver and execution engine. Only `enabled: false` explicitly
+bypasses the published policies.
+
+The existing watcher checks Redis every 30 seconds, matching the built-in
+manager's default cache lifetime. Publication adds its own interval. A reload
+builds all policies before swapping the active set; invalid, expired or missing
+configuration fails new requests. Each MCP operation pins its selected policy, so a reload cannot change it
+halfway through. Operations retain their selected
+runtime, matched pre/post hooks, CPEX local/shared state, and permitted extension
+updates, including post-only hooks and tool progress/logging events.
+
+Plugin extensions expose the server-generated request ID, active trace/span,
+canonical target, tool schema/identity, gateway and virtual-server IDs, HTTP
+request data, and verified subject claims. `UserConfig.user_email` supplies the
+control-plane user name when present; otherwise the verified principal is used.
+Target policy scope is stored in `meta.scope`, separately from subject claims.
+CPEX's condition matcher uses that scope, canonical target, authenticated user,
+server and request content type. Client arguments and plugin state cannot select
+a policy or establish identity.
+
+Within each execution mode, hooks run in ascending numeric priority (1 before
+90). Equal priorities retain configuration order. This order is compiled into
+each policy snapshot and applies to all MCP pre/post hooks.
+
+CPEX filters each plugin's view by its declared capabilities. The gateway guards
+every extension write-back before the next plugin executes: identity remains
+host-owned, hidden fields remain intact, labels are append-only with
+`append_labels`, and HTTP writes require `write_headers`. Authentication headers
+remain unchanged unless the published setting permits them. Permitted custom
+state and extension updates survive pre/post execution; upstream actions remain
+with the separate actions integration. Published hook payload policies control
+whether the existing gateway projection accepts argument, result, URI or content
+edits. `settings.plugin_timeout` sets the maximum duration of each plugin hook invocation
+in seconds (default: 30). For example, `"settings": {"plugin_timeout": 5}` allows
+five seconds per plugin in both pre and post hooks. CPEX enforces this with
+`tokio::time::timeout`; expiry drops the handler future and follows the plugin's
+`on_error` policy. This does not bound backend work or the total time for a chain
+of plugins. Like other asynchronous timeouts, handlers must yield to be cancelled.
+
+Supported gateway hooks are tool, prompt and resource pre/post hooks. Unsupported
+hooks, route-based CPEX configuration, plugin directories and missing factories
+fail configuration loading. Redis policy cannot load Python modules or add new
+Rust factories. Authentication-resolution/permission hooks and the broader
+execution-pool and plugin-load-error parity work remain outside this adapter.
 
 Compile bundled factories with `--features plugins` and enable execution with
 `--runtime-plugins-enabled true`. A valid document must exist before startup;
@@ -281,18 +342,25 @@ configuration; run it before starting the ContextForge external dataplane:
 ```bash
 docker compose -f docker/docker-compose-local.yaml exec -T redis \
   redis-cli SET ContextForgeGatewayRuntimePluginConfig '{
-    "version": 1,
-    "cpex": {
-      "plugins": [
-        {
-          "name": "payload-marker",
-          "kind": "contextforge/payload-marker",
-          "hooks": ["cmf.tool_post_invoke"]
-        }
-      ]
+    "enabled": true,
+    "global": {"plugins": []},
+    "contexts": {
+      "quickstart-counter": {
+        "plugins": [
+          {
+            "name": "payload-marker",
+            "kind": "contextforge/payload-marker",
+            "hooks": ["cmf.tool_post_invoke"]
+          }
+        ]
+      }
     }
   }'
 ```
+
+This example uses the `quickstart-counter` policy key from the quick-start
+routes. For other tools, publish a matching `contexts[context_id]` entry;
+`global` alone applies to prompt and resource hooks.
 
 For local testing only, build and run with demo factories, `with_tools` helpers,
 and runtime execution enabled:

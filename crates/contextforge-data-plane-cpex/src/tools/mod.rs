@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use tokio::sync::Mutex;
 
 use crate::{
-    ArgumentsUpdate, GatewayPluginRuntimeHandle, PreHookResult,
+    ArgumentsUpdate, GatewayPluginRuntimeHandle, PluginRequestContext, PreHookResult,
     cmf::{CmfResponse, Operation, message_payload},
     runtime::CallState,
 };
@@ -113,12 +113,14 @@ impl GatewayPluginRuntimeHandle {
         request: &CallToolRequestParams,
         tool_name: &str,
         backend_name: &str,
+        context: PluginRequestContext,
     ) -> Result<PreHookResult<ToolHookState>, ErrorData> {
         let (arguments, state) = self
             .current()?
+            .tool(context.tool.as_ref())?
             .before(
-                Operation::Tool,
-                tool_name,
+                (Operation::Tool, tool_name),
+                context.extensions,
                 |id| tool_call_payload(request, tool_name, backend_name, id),
                 |payload, _| {
                     let arguments = tool_call_arguments(payload).ok_or_else(|| {

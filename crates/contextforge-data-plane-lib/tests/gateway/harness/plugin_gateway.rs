@@ -427,12 +427,14 @@ async fn start_gateway_with_state(
         .set_config(
             &User::new(user),
             &UserConfig {
+                user_email: None,
                 virtual_hosts: HashMap::from([(
                     virtual_host_id.to_owned(),
                     VirtualHost {
                         backends: HashMap::from([(
                             backend_name.clone(),
                             BackendMCPGateway {
+                                tool_policy_contexts: std::collections::HashMap::new(),
                                 url: backend.url("/mcp").parse().expect("backend URL"),
                                 name: String::new(),
                                 mcp_protocol_version: rmcp::model::ProtocolVersion::V_2026_07_28,

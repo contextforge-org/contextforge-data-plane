@@ -321,7 +321,7 @@ fn plugin_yaml(hook: &str, config_block: &str) -> String {
     format!(
         r#"plugins:
   - name: secrets-detection
-    kind: validator/secrets-detection
+    kind: cpex_secrets_detection.SecretsDetectionPlugin
     hooks: ["{hook}"]
     mode: sequential
 {config}"#

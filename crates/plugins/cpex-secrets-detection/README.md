@@ -15,12 +15,13 @@ Example config:
 
 ```json
 {
-  "version": 1,
-  "cpex": {
+  "enabled": true,
+  "contexts": {},
+  "global": {
     "plugins": [
       {
         "name": "secrets-detection",
-        "kind": "validator/secrets-detection",
+        "kind": "cpex_secrets_detection.SecretsDetectionPlugin",
         "hooks": ["cmf.tool_pre_invoke", "cmf.tool_post_invoke", "cmf.resource_post_fetch"],
         "config": {
           "redact": true,
@@ -32,6 +33,11 @@ Example config:
   }
 }
 ```
+
+For tool calls, the publisher also places the resolved plugin configuration in
+`contexts[context_id]` and publishes the corresponding `tool_policy_contexts`
+entry on the routed backend. An enabled document without the tool's policy
+context fails the call. Prompts and resources select `global`.
 
 The dataplane integration supports:
 
@@ -53,7 +59,7 @@ content. Depending on config, it can:
 The CPEX plugin kind is:
 
 ```text
-validator/secrets-detection
+cpex_secrets_detection.SecretsDetectionPlugin
 ```
 
 ## Known CPEX 0.2.2 Gaps

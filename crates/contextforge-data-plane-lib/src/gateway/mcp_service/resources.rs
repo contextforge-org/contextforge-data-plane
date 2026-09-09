@@ -31,7 +31,18 @@ pub(super) async fn read_resource(
     };
 
     let resource_hook = if let Some(plugin_runtime) = &mcp_service.plugin_runtime {
-        Some(plugin_runtime.before_read_resource(&route.upstream_name).await?)
+        let backend = virtual_host
+            .backends
+            .get(&route.backend_name)
+            .ok_or_else(|| ErrorData::invalid_params("Routing problem... backend not found", None))?;
+        let context = super::plugin_context::request_context(
+            &cx,
+            "resource",
+            &route.upstream_name,
+            &route.backend_name,
+            backend,
+        )?;
+        Some(plugin_runtime.before_read_resource(&route.upstream_name, context).await?)
     } else {
         None
     };
