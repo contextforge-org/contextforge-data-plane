@@ -8,10 +8,9 @@ use contextforge_data_plane_apis::runtime_plugin_config::RuntimePluginSettings;
 use cpex::cpex_core::{
     cmf::{CmfHook, MessagePayload},
     config::CpexConfig,
-    context::PluginContextTable,
     executor::PipelineResult,
     factory::PluginFactoryRegistry,
-    hooks::payload::Extensions,
+    hooks::{HookTypeDef, payload::Extensions},
     manager::PluginManager,
     plugin::{MatchContext, PluginMode},
     registry::HookEntry,
@@ -20,31 +19,33 @@ use rmcp::ErrorData;
 use tracing::instrument;
 
 use crate::{
-    cmf::{CmfResponse, Operation, modified_message_payload, plugin_denied_error},
+    PluginRequest,
+    cmf::{CmfResponse, modified_message_payload, plugin_denied_error},
     error::GatewayPluginRuntimeError,
-    factory::supported_cmf_hook_name,
+    extension_guard::HeaderWritePolicy,
+    factory::supported_hook_name,
+    hooks::Operation,
 };
 
 #[derive(Default)]
 struct HookPair {
     pre: Vec<HookEntry>,
     post: Vec<HookEntry>,
+    payload_writes: [bool; 2],
 }
 
 #[derive(Default)]
 pub(crate) struct GatewayPluginRuntime {
     manager: PluginManager,
-    hooks: [HookPair; 3],
-    payload_writes: [[bool; 2]; 3],
+    hooks: [HookPair; 4],
     auth_headers_writable: bool,
 }
 
-/// Pins the selected runtime and correlation context until the request finishes.
-/// Only tool calls wrap this in a mutex, because events also update their context.
+/// Pins operation-specific payload metadata. Mutable CPEX state belongs to the request.
 pub(crate) struct CallState {
     runtime: Arc<GatewayPluginRuntime>,
-    context_table: PluginContextTable,
-    extensions: Extensions,
+    request: PluginRequest,
+    target: Extensions,
     post: Vec<HookEntry>,
     name: String,
     id: String,
@@ -66,28 +67,29 @@ impl GatewayPluginRuntime {
         for plugin in &mut config.plugins {
             for hook in &mut plugin.hooks {
                 // Python publishes native hook names; registered Rust handlers use CMF.
-                if !hook.starts_with("cmf.") {
+                if !hook.starts_with("cmf.") && !Operation::Http.hooks().contains(&hook.as_str()) {
                     *hook = format!("cmf.{hook}");
                 }
             }
         }
         let mut runtime = Self::from_config(config, factories).await?;
         runtime.auth_headers_writable = settings.plugins_can_override_auth_headers;
-        runtime.payload_writes = Operation::ALL.map(|operation| {
-            operation.hooks().map(|hook| {
+        for (hooks, operation) in runtime.hooks.iter_mut().zip(Operation::ALL) {
+            hooks.payload_writes = operation.hooks().map(|hook| {
                 let name = hook.strip_prefix("cmf.").unwrap_or(hook);
                 let field = match name {
                     "tool_pre_invoke" | "prompt_pre_fetch" => "args",
                     "tool_post_invoke" | "prompt_post_fetch" => "result",
                     "resource_pre_fetch" => "uri",
+                    "http_pre_request" | "http_post_request" => "headers",
                     _ => "content",
                 };
                 settings
                     .hook_policies
                     .get(name)
                     .map_or(settings.default_hook_policy == "allow", |policy| policy.writable_fields.contains(field))
-            })
-        });
+            });
+        }
         Ok(runtime)
     }
 
@@ -108,19 +110,23 @@ impl GatewayPluginRuntime {
             let [pre, post] = operation
                 .hooks()
                 .map(|name| entries.iter().filter(|(hook, _)| hook == name).map(|(_, entry)| entry.clone()).collect());
-            HookPair { pre, post }
+            HookPair { pre, post, payload_writes: [true; 2] }
         });
-        Ok(Self { manager, hooks, payload_writes: [[true; 2]; 3], auth_headers_writable: false })
+        Ok(Self { manager, hooks, auth_headers_writable: false })
     }
 
-    #[instrument(name = "cmf_plugin_before", level = "info", skip(self, target, payload, update, extensions))]
+    #[instrument(name = "cmf_plugin_before", level = "info", skip_all)]
     pub(crate) async fn before<U: Default>(
         self: &Arc<Self>,
         target: (Operation, &str),
-        mut extensions: Extensions,
+        context: (PluginRequest, Extensions),
         payload: impl FnOnce(&str) -> MessagePayload,
         update: impl FnOnce(&MessagePayload, &str) -> Result<U, ErrorData>,
     ) -> Result<(U, Option<CallState>), ErrorData> {
+        let (request, target_extensions) = context;
+        let mut extensions = request.extensions().await;
+        extensions.meta.clone_from(&target_extensions.meta);
+        extensions.mcp.clone_from(&target_extensions.mcp);
         let (operation, name) = target;
         let hooks = &self.hooks[operation as usize];
         let pre = matching_entries(&hooks.pre, &extensions);
@@ -130,26 +136,22 @@ impl GatewayPluginRuntime {
         }
 
         let id = format!("{}-{}", operation.id_prefix(), CORRELATION_ID.fetch_add(1, Ordering::Relaxed));
-        let (update, context_table) = if pre.is_empty() {
-            (U::default(), PluginContextTable::default())
+        let update = if pre.is_empty() {
+            U::default()
         } else {
-            let result = self.invoke((operation.hooks()[0], &pre), payload(&id), extensions.clone(), None).await;
+            let result = self.invoke::<CmfHook>((operation, 0, &pre), payload(&id), &request, &target_extensions).await;
             if result.is_denied() {
                 return Err(plugin_denied_error(operation.subject(), result));
             }
-            let update = match modified_message_payload(&result) {
+            match modified_message_payload(&result) {
                 Some(payload) => update(payload, &id)?,
                 None => U::default(),
-            };
-            if let Some(modified) = result.modified_extensions {
-                extensions = modified;
             }
-            (update, result.context_table)
         };
         let state = (!post.is_empty()).then(|| CallState {
             runtime: Arc::clone(self),
-            context_table,
-            extensions,
+            request,
+            target: target_extensions,
             post,
             name: name.to_owned(),
             id,
@@ -157,26 +159,43 @@ impl GatewayPluginRuntime {
         Ok((update, state))
     }
 
-    #[instrument(name = "cmf_plugin_invoke", level = "info", skip_all)]
-    async fn invoke(
+    pub(crate) fn entries(&self, operation: Operation, phase: usize, extensions: &Extensions) -> Vec<HookEntry> {
+        let hooks = &self.hooks[operation as usize];
+        matching_entries(if phase == 0 { &hooks.pre } else { &hooks.post }, extensions)
+    }
+
+    #[instrument(name = "gateway_plugin_invoke", level = "info", skip_all, fields(hook = invocation.0.hooks()[invocation.1]))]
+    pub(crate) async fn invoke<H: HookTypeDef>(
         &self,
-        invocation: (&'static str, &[HookEntry]),
-        payload: MessagePayload,
-        extensions: Extensions,
-        context_table: Option<PluginContextTable>,
+        invocation: (Operation, usize, &[HookEntry]),
+        payload: H::Payload,
+        request: &PluginRequest,
+        target: &Extensions,
     ) -> PipelineResult {
-        let (hook, entries) = invocation;
-        let payload_writable = Operation::ALL
-            .iter()
-            .enumerate()
-            .find_map(|(i, operation)| {
-                operation.hooks().iter().position(|name| *name == hook).map(|j| self.payload_writes[i][j])
-            })
-            .unwrap_or(false);
-        let entries =
-            crate::extension_guard::guarded_entries(entries, &extensions, payload_writable, self.auth_headers_writable);
-        let (result, background_tasks) =
-            self.manager.invoke_entries::<CmfHook>(&entries, payload, extensions, context_table).await;
+        let (operation, phase, entries) = invocation;
+        let hook = operation.hooks()[phase];
+        // Only this request is serialized. No registry or gateway lock crosses plugin I/O.
+        let mut state = request.state.lock().await;
+        state.extensions.meta.clone_from(&target.meta);
+        state.extensions.mcp.clone_from(&target.mcp);
+        state.prepare(entries);
+        let writable = self.hooks[operation as usize].payload_writes[phase];
+        let http = matches!(operation, Operation::Http);
+        let header_policy = if http && !writable {
+            HeaderWritePolicy::ReadOnly
+        } else if self.auth_headers_writable {
+            HeaderWritePolicy::All
+        } else if http && phase == 0 {
+            HeaderWritePolicy::AllowNewCredentials
+        } else {
+            HeaderWritePolicy::PreserveCredentials
+        };
+        let guarded =
+            crate::extension_guard::guarded_entries(entries, &state.extensions, !http && writable, header_policy);
+        let (result, background_tasks) = self
+            .manager
+            .invoke_entries::<H>(&guarded, payload, state.extensions.clone(), Some(state.contexts.clone()))
+            .await;
         for error in &result.errors {
             tracing::warn!(
                 hook,
@@ -186,13 +205,19 @@ impl GatewayPluginRuntime {
                 "CPEX plugin soft error"
             );
         }
+        if !result.is_denied() {
+            state.contexts = result.context_table.clone();
+            if let Some(extensions) = &result.modified_extensions {
+                state.extensions = extensions.clone();
+            }
+        }
         drop(background_tasks);
         result
     }
 }
 
 impl CallState {
-    pub(crate) async fn after<T: CmfResponse>(&mut self, response: T) -> Result<T, ErrorData> {
+    pub(crate) async fn after<T: CmfResponse>(&self, response: T) -> Result<T, ErrorData> {
         let result = self.invoke(&response).await?;
         if result.is_denied() {
             return Err(plugin_denied_error(T::OPERATION.subject(), result));
@@ -200,23 +225,10 @@ impl CallState {
         self.apply(response, &result)
     }
 
-    pub(crate) async fn invoke<T: CmfResponse>(&mut self, response: &T) -> Result<PipelineResult, ErrorData> {
+    pub(crate) async fn invoke<T: CmfResponse>(&self, response: &T) -> Result<PipelineResult, ErrorData> {
         let payload = response.to_payload(&self.name, &self.id)?;
-        let result = self
-            .runtime
-            .invoke(
-                (T::OPERATION.hooks()[1], &self.post),
-                payload,
-                self.extensions.clone(),
-                Some(self.context_table.clone()),
-            )
-            .await;
-        if !result.is_denied() {
-            self.context_table = result.context_table.clone();
-            if let Some(extensions) = &result.modified_extensions {
-                self.extensions = extensions.clone();
-            }
-        }
+        let result =
+            self.runtime.invoke::<CmfHook>((T::OPERATION, 1, &self.post), payload, &self.request, &self.target).await;
         Ok(result)
     }
 
@@ -289,7 +301,7 @@ fn validate_gateway_supported_config(config: &CpexConfig) -> Result<(), GatewayP
     }
 
     for plugin in &config.plugins {
-        if plugin.hooks.iter().any(|hook| supported_cmf_hook_name(hook).is_none()) {
+        if plugin.hooks.iter().any(|hook| supported_hook_name(hook).is_none()) {
             return Err(GatewayPluginRuntimeError::ConfigUnsupported);
         }
     }

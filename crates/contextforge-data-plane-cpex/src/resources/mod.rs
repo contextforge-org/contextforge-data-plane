@@ -9,7 +9,8 @@ use rmcp::{
 
 use crate::{
     GatewayPluginRuntimeHandle, PluginRequestContext,
-    cmf::{CmfResponse, Operation, message_payload},
+    cmf::{CmfResponse, message_payload},
+    hooks::Operation,
     runtime::CallState,
 };
 
@@ -116,7 +117,7 @@ impl ResourceHookState {
 
     pub async fn after_read_resource(self, response: ReadResourceResult) -> Result<ReadResourceResult, ErrorData> {
         match self.call {
-            Some(mut call) => call.after(response).await,
+            Some(call) => call.after(response).await,
             None => Ok(response),
         }
     }
@@ -128,12 +129,11 @@ impl GatewayPluginRuntimeHandle {
         resource_uri: &str,
         context: PluginRequestContext,
     ) -> Result<ResourceHookState, ErrorData> {
-        let (rewritten_uri, call) = self
-            .current()?
-            .global
+        let (request_state, runtime) = self.resolve(Operation::Resource, &context)?;
+        let (rewritten_uri, call) = runtime
             .before(
                 (Operation::Resource, resource_uri),
-                context.extensions,
+                (request_state, context.extensions),
                 |id| resource_request_payload(resource_uri, id),
                 |payload, _| {
                     let [ContentPart::ResourceRef { content }] = payload.message.content.as_slice() else {

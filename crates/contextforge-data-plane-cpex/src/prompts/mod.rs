@@ -15,7 +15,8 @@ use serde_json::{Map, Value};
 
 use crate::{
     ArgumentsUpdate, GatewayPluginRuntimeHandle, PluginRequestContext, PreHookResult,
-    cmf::{CmfResponse, Operation, message_payload},
+    cmf::{CmfResponse, message_payload},
+    hooks::Operation,
     runtime::CallState,
 };
 
@@ -243,12 +244,11 @@ impl GatewayPluginRuntimeHandle {
         backend_name: &str,
         context: PluginRequestContext,
     ) -> Result<PreHookResult<PromptHookState>, ErrorData> {
-        let (arguments, state) = self
-            .current()?
-            .global
+        let (request_state, runtime) = self.resolve(Operation::Prompt, &context)?;
+        let (arguments, state) = runtime
             .before(
                 (Operation::Prompt, prompt_name),
-                context.extensions,
+                (request_state, context.extensions),
                 |id| prompt_request_payload(request, prompt_name, backend_name, id),
                 |payload, id| {
                     let arguments =
@@ -264,7 +264,7 @@ impl GatewayPluginRuntimeHandle {
 }
 
 impl PromptHookState {
-    pub async fn after_get_prompt(mut self, response: GetPromptResult) -> Result<GetPromptResult, ErrorData> {
+    pub async fn after_get_prompt(self, response: GetPromptResult) -> Result<GetPromptResult, ErrorData> {
         self.0.after(response).await
     }
 }

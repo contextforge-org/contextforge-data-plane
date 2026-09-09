@@ -16,6 +16,8 @@ TCP/TLS listener
   -> CORS layer
   -> mcp_header_limits_layer    bounds MCP headers (431)
   -> virtual_host_id_layer      inserts VirtualHostId from path (400)
+  -> HTTP pre hook              global plugins, permitted request-header edits
+  -> mcp_header_limits_layer    rechecks edited MCP headers (431)
   -> claims_layer               verifies JWT, inserts AuthorizationClaims (401)
   -> PrincipalExtractorLayer   inserts AuthorizedPrincipal (401)
   -> user_config_store_layer    loads UserConfig (400 missing, 500 decode/error)
@@ -26,7 +28,9 @@ TCP/TLS listener
 
 Origin is checked before authentication. The optional Host allowlist is checked
 at the RMCP boundary, so earlier middleware may return first. MCP header budgets
-apply before JWT verification, configuration reads, and body parsing. See
+apply before JWT verification, user-configuration reads, and body parsing. The
+HTTP post hook runs as the response returns through the HTTP plugin layer,
+before headers are sent; streaming MCP work may still be running. See
 [Security](security.md#mcp-origin-and-host-validation).
 
 Health is registered in every build outside the MCP auth/config layers, while
@@ -89,7 +93,8 @@ into successful response hooks. See [Routing](routing.md) and
 | Principal, claims, virtual-host ID, config snapshot | HTTP request extensions | One request. |
 | Backend RMCP service | Routed operation | One request; explicitly closed after the call. |
 | Tool progress-token mapping | Request's backend client | While the tool call is in flight. |
-| Active CPEX runtime | Registry | Reloadable; in-flight hook state pins its selected runtime. |
+| Active CPEX policies | Registry | Reloadable; each HTTP request pins the full policy snapshot. |
+| Plugin request context | Request-owned `PluginRequest` | Shared CPEX state and permitted extension updates across HTTP and MCP hooks, including streaming work. |
 | RMCP session manager | RMCP service (`LocalSessionManager`) | Transport implementation detail; no session is required by the supported modern request contract. |
 
 The library no longer has `BackendTransports`, `SessionId` middleware, or a
@@ -114,8 +119,8 @@ Locks have specific scopes:
   shared state; do not assume all network I/O is globally lock-free.
 - Tool progress tracking holds a write guard while enqueuing the backend call
   so an early notification cannot race registration.
-- Tool hook state uses a mutex to serialize progress and final-response plugin
-  context updates. Prompt/resource state belongs to one request.
+- A request-scoped plugin mutex serializes HTTP/MCP hook state updates, including
+  tool progress and final responses. No registry lock is held during execution.
 
 There is no shared map of live backend transports to lock during routing.
 
@@ -138,11 +143,15 @@ post-hooks can inspect stream events, and a denied notification is dropped.
 Prompt/resource operations should not be assumed to have the same explicit
 cancellation relay.
 
-Pre-hooks select a runtime before backend I/O. Typed hook state retains both
-that runtime and whether a post-hook was enabled. Reloads affect subsequent
-requests; they cannot add a hook or change policy halfway through a call.
-Invalid reloads mark the registry failed for new calls while already pinned
-requests can finish. Details are in [Plugin Config](config.md#plugin-config-redis-key-contextforgegatewayruntimepluginconfig).
+The HTTP boundary pins the full policy snapshot in one `PluginRequest`. HTTP
+hooks use the global policy; tool hooks resolve published tool/team contexts,
+and prompt/resource hooks use the global policy. Authentication and user-config
+lookup attach verified identity; routing adds target metadata. Each operation
+retains its selected runtime and matched pre/post hooks. Reloads affect new HTTP
+requests; in-flight work keeps its policy and state, including streaming events.
+Invalid reloads fail new requests while already pinned requests can finish.
+See [HTTP hooks and shared request state](config.md#http-hooks-and-shared-request-state)
+for ordering, failure, timeout, cancellation and streaming behavior.
 
 ## Startup
 

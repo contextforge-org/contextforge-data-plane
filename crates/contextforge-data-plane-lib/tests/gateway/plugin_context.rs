@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use contextforge_data_plane_apis::{
     User, runtime_plugin_config::RuntimePluginConfigDocument, user_store::ToolPolicyContext,
 };
-use contextforge_data_plane_cpex::{CmfPluginFactory, CpexRuntimeRegistry};
+use contextforge_data_plane_cpex::{CpexRuntimeRegistry, GatewayPluginFactory};
 use contextforge_data_plane_lib::UserConfigStore;
 use cpex::cpex_core::{
     cmf::{CmfHook, MessagePayload},
@@ -136,7 +136,10 @@ async fn runtime(document: RuntimePluginConfigDocument) -> (Arc<CpexRuntimeRegis
     runtime
         .register_factory(
             "context-test",
-            Box::new(CmfPluginFactory::new(move |config| ContextPlugin { config, seen: Arc::clone(&captured) })),
+            Box::new(
+                GatewayPluginFactory::new(move |config| ContextPlugin { config, seen: Arc::clone(&captured) })
+                    .with_cmf_hooks(),
+            ),
         )
         .expect("factory");
     runtime.apply_document(document).await.expect("published policy applies");
@@ -210,6 +213,7 @@ async fn post_only_stream_context_stays_pinned_across_reload() {
 
     let (runtime, seen) = runtime(document(&[], &[plugin("stream", &["tool_post_invoke"], true)])).await;
     let context = PluginRequestContext {
+        request: None,
         tool: Some(ToolPolicyContext {
             id: "id".to_owned(),
             name: "gateway_sum".to_owned(),

@@ -7,6 +7,8 @@ mod compatibility;
 mod completions;
 #[path = "gateway/future_contracts/mod.rs"]
 mod future_contracts;
+#[path = "gateway/http_plugins.rs"]
+mod http_plugins;
 #[path = "gateway/plugin_context.rs"]
 mod plugin_context;
 #[path = "gateway/plugins.rs"]

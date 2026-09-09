@@ -244,7 +244,7 @@ Tools select the resolved configuration using
 the tool's canonical `id`, gateway `name`, and owning `team_id`. Aliases select
 the same upstream tool context. With plugins enabled, a missing tool identity or
 policy context fails the call before backend I/O; it never falls back to global
-policy. Prompts and resources use `global`, matching the built-in
+policy. Prompts, resources and HTTP hooks use `global`, matching the built-in
 resolver, which only applies database bindings to team/tool context keys.
 All targets use the same policy resolver and execution engine. Only `enabled: false` explicitly
 bypasses the published policies.
@@ -252,8 +252,8 @@ bypasses the published policies.
 The existing watcher checks Redis every 30 seconds, matching the built-in
 manager's default cache lifetime. Publication adds its own interval. A reload
 builds all policies before swapping the active set; invalid, expired or missing
-configuration fails new requests. Each MCP operation pins its selected policy, so a reload cannot change it
-halfway through. Operations retain their selected
+configuration fails new requests. Each HTTP request pins the full policy snapshot,
+so its MCP operations cannot pick up a newer policy halfway through. Operations retain their selected
 runtime, matched pre/post hooks, CPEX local/shared state, and permitted extension
 updates, including post-only hooks and tool progress/logging events.
 
@@ -268,7 +268,7 @@ a policy or establish identity.
 
 Within each execution mode, hooks run in ascending numeric priority (1 before
 90). Equal priorities retain configuration order. This order is compiled into
-each policy snapshot and applies to all MCP pre/post hooks.
+each policy snapshot and applies to both HTTP and MCP pre/post hooks.
 
 CPEX filters each plugin's view by its declared capabilities. The gateway guards
 every extension write-back before the next plugin executes: identity remains
@@ -285,11 +285,50 @@ five seconds per plugin in both pre and post hooks. CPEX enforces this with
 `on_error` policy. This does not bound backend work or the total time for a chain
 of plugins. Like other asynchronous timeouts, handlers must yield to be cancelled.
 
-Supported gateway hooks are tool, prompt and resource pre/post hooks. Unsupported
+Supported gateway hooks are HTTP, tool, prompt and resource pre/post hooks. Unsupported
 hooks, route-based CPEX configuration, plugin directories and missing factories
 fail configuration loading. Redis policy cannot load Python modules or add new
 Rust factories. Authentication-resolution/permission hooks and the broader
 execution-pool and plugin-load-error parity work remain outside this adapter.
+
+### HTTP hooks and shared request state
+
+`http_pre_request` runs after the existing Origin/header-budget checks and before
+credential verification. `http_post_request` runs when response headers are
+available, including authentication failures. Both use the published global
+configuration. The native `HttpHook` payload provides method, original path,
+client address when available, and response status on the post hook. Headers
+are CPEX extensions, gated by `read_headers`, `write_headers`, and the published
+hook's `headers` write policy. Use `GatewayPluginFactory` with `.with_http_hooks()`
+and/or `.with_cmf_hooks()` to register handlers on the same plugin instance.
+
+Header changes are merged before the next plugin runs, preserving existing
+request/response headers even when the writer lacks `read_headers`. Method,
+path, host and scheme remain host-provided metadata. Invalid header updates
+are ignored. Existing auth headers are protected unless
+`plugins_can_override_auth_headers` is true. The
+before hook may add a previously absent credential header, which normal
+authentication must still verify. MCP header budgets are checked again after
+plugin edits. HTTP hooks do not modify request bodies, response bodies or status.
+
+One `PluginRequest` carries the policy snapshot, correlation ID, CPEX state table
+and permitted extension changes across all stages. Scoped/global managers give
+plugins different runtime IDs; request-local state follows the configured plugin
+kind and name when crossing that boundary. Verified identity comes only from the
+host after authentication and user-configuration lookup, even if that lookup fails.
+MCP routing adds target metadata to this existing state; it does not reconstruct
+transport data or identity. A request-scoped mutex serializes hook state updates;
+no registry lock is held while plugins run.
+
+As in the built-in HTTP middleware, HTTP hook errors, denials and timeouts are
+logged and the request continues. The configured CPEX timeout bounds execution;
+missing required configuration still fails the request. Dropping the request
+future cancels foreground hook work. Invocation spans use `gateway_plugin_invoke`
+with the hook name; logs omit header values.
+
+Streaming responses are not buffered. The HTTP post hook runs once before headers
+are sent, so it cannot observe MCP work that completes later in the stream.
+Those later MCP hooks retain the same request state and policy snapshot.
 
 Compile bundled factories with `--features plugins` and enable execution with
 `--runtime-plugins-enabled true`. A valid document must exist before startup;
@@ -360,7 +399,7 @@ docker compose -f docker/docker-compose-local.yaml exec -T redis \
 
 This example uses the `quickstart-counter` policy key from the quick-start
 routes. For other tools, publish a matching `contexts[context_id]` entry;
-`global` alone applies to prompt and resource hooks.
+`global` alone applies to prompt, resource and HTTP hooks.
 
 For local testing only, build and run with demo factories, `with_tools` helpers,
 and runtime execution enabled:

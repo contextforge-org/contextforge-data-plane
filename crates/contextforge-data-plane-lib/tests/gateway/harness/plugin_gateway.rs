@@ -226,6 +226,12 @@ impl ServerHandler for TestBackend {
                 Ok(CallToolResult::success(vec![ContentBlock::text(text.to_owned())]))
             },
             "wait_for_cancellation" => {
+                if let Some(token) = cx.meta.get_progress_token() {
+                    cx.peer
+                        .notify_progress(ProgressNotificationParam::new(token.clone(), 0.0))
+                        .await
+                        .map_err(|_| ErrorData::internal_error("progress notification failed", None))?;
+                }
                 cx.ct.cancelled().await;
                 self.state
                     .cancellations

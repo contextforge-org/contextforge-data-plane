@@ -125,11 +125,12 @@ impl Gateway {
         let reqwest_backend_client = reqwest::Client::try_from(&config)?;
 
         // Create streamable HTTP service
+        let mcp_plugin_runtime = plugin_runtime.clone();
         let mcp_service: StreamableHttpService<McpService, LocalSessionManager> = StreamableHttpService::new(
             move || {
                 Ok(McpService::builder()
                     .with_http_client(reqwest_backend_client.clone())
-                    .with_plugin_runtime(plugin_runtime.clone())
+                    .with_plugin_runtime(mcp_plugin_runtime.clone())
                     .build())
             },
             session_manager,
@@ -158,8 +159,14 @@ impl Gateway {
             app.layer(layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor {}))
         };
 
+        let app = app.layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), claims_layer));
+        let app = if let Some(runtime) = plugin_runtime {
+            app.layer(middleware::from_fn_with_state(mcp_standard_header_limits.clone(), mcp_header_limits_layer))
+                .layer(middleware::from_fn_with_state(runtime, layers::http_plugins::http_plugin_layer))
+        } else {
+            app
+        };
         let app = app
-            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), claims_layer))
             .layer(middleware::from_fn(virtual_host_id_layer))
             .layer(middleware::from_fn_with_state(mcp_standard_header_limits, mcp_header_limits_layer))
             .layer(cors_layer)

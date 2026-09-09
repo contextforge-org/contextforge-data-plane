@@ -1,4 +1,5 @@
 pub mod claims_id;
+pub(crate) mod http_plugins;
 pub mod mcp_header_limits;
 pub mod mcp_origin;
 pub mod principal_extractor;

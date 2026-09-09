@@ -66,14 +66,12 @@ validation.
 tool/prompt arguments or the resource URI. Resource URI edits must resolve through
 the caller's published routes. Post-hooks can rewrite or reject the response.
 
-Tools select their published tool/team policy before backend I/O; prompts and
-resources select the global policy. The host supplies verified identity and
-canonical route metadata to each hook. It returns typed request state
-whose `after_*` method runs the post-hook on that same runtime, even after a reload
-or a reload failure. A request that started without post-hooks never gains one
-mid-flight. Tool state is shared under a mutex so progress notifications and the
-final response use the same correlation ID and serialize plugin-context updates.
-Prompt and resource state is owned by a single request and needs no mutex.
+The HTTP layer pins the policy snapshot before authentication. Tool hooks select
+the routed backend's published tool policy context; prompt, resource and HTTP
+hooks use the global policy. Typed operation state runs pre/post hooks on the
+same runtime, even after a reload or reload failure. One request-scoped mutex
+serializes shared plugin state across HTTP/MCP hooks and tool progress events.
+A request that started without post-hooks never gains one mid-flight.
 
 The internal CPEX crate separates these responsibilities:
 

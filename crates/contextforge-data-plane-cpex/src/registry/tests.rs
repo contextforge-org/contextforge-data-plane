@@ -8,6 +8,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use contextforge_data_plane_apis::runtime_plugin_config::{RuntimePluginConfigDocument, RuntimePluginSettings};
 use cpex::cpex_core::{
     cmf::{CmfHook, ContentPart, MessagePayload},
     context::PluginContext,
@@ -18,19 +19,14 @@ use cpex::cpex_core::{
     registry::AnyHookHandler,
 };
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, NumberOrString, ProgressNotificationParam, ProgressToken,
-    ReadResourceResult, ResourceContents,
+    CallToolRequestParams, CallToolResult, ContentBlock, GetPromptRequestParams, NumberOrString,
+    ProgressNotificationParam, ProgressToken, ReadResourceResult, ResourceContents,
 };
 use serde_json::{Value, json};
 use tokio::sync::Mutex as TokioMutex;
 
-use contextforge_data_plane_apis::runtime_plugin_config::{RuntimePluginConfigDocument, RuntimePluginSettings};
-
-use crate::config::LoadedRuntimePluginConfig;
-use crate::{ArgumentsUpdate, CmfPluginFactory, PreHookResult, ToolHookState};
-use rmcp::model::GetPromptRequestParams;
-
 use super::*;
+use crate::{ArgumentsUpdate, GatewayPluginFactory, PreHookResult, ToolHookState, config::LoadedRuntimePluginConfig};
 
 const TEST_MISSING_CONTEXT_ERROR_CODE: i64 = -32003;
 const TEST_REWRITTEN_SUM_A: i64 = 10;
@@ -311,7 +307,7 @@ impl PluginFactory for TestPluginFactory {
             .hooks
             .iter()
             .filter_map(|hook| {
-                let hook = crate::factory::supported_cmf_hook_name(hook)?;
+                let hook = crate::factory::supported_hook_name(hook)?;
                 Some((
                     hook,
                     Arc::new(TypedHandlerAdapter::<CmfHook, _>::new(Arc::clone(&plugin))) as Arc<dyn AnyHookHandler>,
@@ -541,7 +537,10 @@ async fn runtime_config_loads_generic_cmf_factory_plugin() {
     }));
     let mut runtime = CpexRuntimeRegistry::with_config_store(Arc::new(MemoryConfigStore::with_config(config)));
     runtime
-        .register_factory("generic", Box::new(CmfPluginFactory::new(TestPlugin::rewrite_from_config)))
+        .register_factory(
+            "generic",
+            Box::new(GatewayPluginFactory::new(TestPlugin::rewrite_from_config).with_cmf_hooks()),
+        )
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
@@ -564,7 +563,10 @@ async fn generic_cmf_factory_registers_prompt_only_plugin() {
     }));
     let mut runtime = CpexRuntimeRegistry::with_config_store(Arc::new(MemoryConfigStore::with_config(config)));
     runtime
-        .register_factory("generic", Box::new(CmfPluginFactory::new(TestPlugin::rewrite_from_config)))
+        .register_factory(
+            "generic",
+            Box::new(GatewayPluginFactory::new(TestPlugin::rewrite_from_config).with_cmf_hooks()),
+        )
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
@@ -591,7 +593,10 @@ async fn generic_cmf_factory_registers_mixed_tool_and_prompt_plugin() {
     }));
     let mut runtime = CpexRuntimeRegistry::with_config_store(Arc::new(MemoryConfigStore::with_config(config)));
     runtime
-        .register_factory("generic", Box::new(CmfPluginFactory::new(TestPlugin::rewrite_from_config)))
+        .register_factory(
+            "generic",
+            Box::new(GatewayPluginFactory::new(TestPlugin::rewrite_from_config).with_cmf_hooks()),
+        )
         .expect("test factory registers");
     runtime.initialize().await.expect("runtime initializes");
 
@@ -930,10 +935,11 @@ fn request_id(payload: &MessagePayload) -> Option<String> {
 
 #[tokio::test]
 async fn hook_combinations_preserve_correlation_for_each_operation() {
-    use crate::cmf::Operation;
     use rmcp::model::{GetPromptResult, PromptMessage, Role};
 
-    for operation in Operation::ALL {
+    use crate::hooks::Operation;
+
+    for operation in Operation::MCP {
         for (pre_enabled, post_enabled) in [(false, false), (true, false), (false, true), (true, true)] {
             let [pre, post] = operation.hooks();
             let hooks = [(pre, pre_enabled), (post, post_enabled)]
@@ -946,6 +952,7 @@ async fn hook_combinations_preserve_correlation_for_each_operation() {
             let handle = runtime.handle();
 
             match operation {
+                Operation::Http => unreachable!("HTTP lifecycle is tested separately"),
                 Operation::Tool => {
                     let pre = handle
                         .before_tool_call(&sum_request(1, 2), "sum", "backend", test_request_context())
@@ -1073,6 +1080,7 @@ async fn dropping_the_last_in_flight_state_releases_the_replaced_runtime() {
 
 fn test_request_context() -> crate::PluginRequestContext {
     crate::PluginRequestContext {
+        request: None,
         tool: Some(ToolPolicyContext {
             id: "test".to_owned(),
             name: "sum".to_owned(),

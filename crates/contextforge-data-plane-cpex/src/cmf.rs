@@ -1,47 +1,12 @@
 //! Common CMF envelopes and the response contract used by the hook runner.
 //! Conversion rules stay with each operation because their MCP semantics differ.
 
+use crate::hooks::Operation;
 use cpex::cpex_core::{
     cmf::{ContentPart, Message, MessagePayload, Role, constants::SCHEMA_VERSION},
     executor::PipelineResult,
-    hooks::types::cmf_hook_names,
 };
 use rmcp::{ErrorData, model::ErrorCode};
-
-#[derive(Clone, Debug, Copy)]
-pub(crate) enum Operation {
-    Tool,
-    Prompt,
-    Resource,
-}
-
-impl Operation {
-    pub(crate) const ALL: [Self; 3] = [Self::Tool, Self::Prompt, Self::Resource];
-
-    pub(crate) fn hooks(self) -> [&'static str; 2] {
-        match self {
-            Self::Tool => [cmf_hook_names::TOOL_PRE_INVOKE, cmf_hook_names::TOOL_POST_INVOKE],
-            Self::Prompt => [cmf_hook_names::PROMPT_PRE_FETCH, cmf_hook_names::PROMPT_POST_FETCH],
-            Self::Resource => [cmf_hook_names::RESOURCE_PRE_FETCH, cmf_hook_names::RESOURCE_POST_FETCH],
-        }
-    }
-
-    pub(crate) fn subject(self) -> &'static str {
-        match self {
-            Self::Tool => "tool call",
-            Self::Prompt => "prompt",
-            Self::Resource => "resource",
-        }
-    }
-
-    pub(crate) fn id_prefix(self) -> &'static str {
-        match self {
-            Self::Tool => "gateway-tool-call",
-            Self::Prompt => "gateway-prompt-request",
-            Self::Resource => "gateway-resource-request",
-        }
-    }
-}
 
 /// Only the projection and application differ between response types.
 /// The runner owns invocation, unchanged payloads, context, and denial handling.

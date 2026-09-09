@@ -17,9 +17,10 @@ use rmcp::{ErrorData, model::ErrorCode};
 use tokio::task::JoinHandle;
 
 use crate::{
+    PluginRequest, PluginRequestContext,
     config::{RedisRuntimePluginConfigStore, RuntimePluginConfigStore},
     error::GatewayPluginRuntimeError,
-    hooks::RuntimeHookError,
+    hooks::{Operation, RuntimeHookError},
     runtime::GatewayPluginRuntime,
 };
 
@@ -51,8 +52,12 @@ pub(crate) struct RuntimePolicies {
 }
 
 impl RuntimePolicies {
-    pub(crate) fn tool(&self, tool: Option<&ToolPolicyContext>) -> Result<Arc<GatewayPluginRuntime>, ErrorData> {
-        if !self.scoped {
+    pub(crate) fn resolve(
+        &self,
+        operation: Operation,
+        tool: Option<&ToolPolicyContext>,
+    ) -> Result<Arc<GatewayPluginRuntime>, ErrorData> {
+        if !matches!(operation, Operation::Tool) || !self.scoped {
             return Ok(Arc::clone(&self.global));
         }
         let tool = tool
@@ -211,6 +216,19 @@ impl CpexRuntimeRegistry {
 }
 
 impl GatewayPluginRuntimeHandle {
+    pub(crate) fn resolve(
+        &self,
+        operation: Operation,
+        context: &PluginRequestContext,
+    ) -> Result<(PluginRequest, Arc<GatewayPluginRuntime>), ErrorData> {
+        let request = match &context.request {
+            Some(request) => request.clone(),
+            None => PluginRequest::new(self.current()?, context.extensions.clone()),
+        };
+        let runtime = request.policies.resolve(operation, context.tool.as_ref())?;
+        Ok((request, runtime))
+    }
+
     pub(crate) fn current(&self) -> Result<Arc<RuntimePolicies>, ErrorData> {
         match self.runtime.load().as_ref() {
             RuntimeState::Active(runtime) => Ok(Arc::clone(runtime)),

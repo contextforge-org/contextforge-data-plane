@@ -13,18 +13,26 @@ use cpex::cpex_core::{
     registry::{AnyHookHandler, HookEntry},
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeaderWritePolicy {
+    ReadOnly,
+    PreserveCredentials,
+    AllowNewCredentials,
+    All,
+}
+
 struct ExtensionGuard {
     entry: HookEntry,
     canonical: Arc<Mutex<Extensions>>,
     payload_writable: bool,
-    auth_headers_writable: bool,
+    header_policy: HeaderWritePolicy,
 }
 
 pub(crate) fn guarded_entries(
     entries: &[HookEntry],
     extensions: &Extensions,
     payload_writable: bool,
-    auth_headers_writable: bool,
+    header_policy: HeaderWritePolicy,
 ) -> Vec<HookEntry> {
     let canonical = Arc::new(Mutex::new(extensions.clone()));
     entries
@@ -35,7 +43,7 @@ pub(crate) fn guarded_entries(
                 entry: entry.clone(),
                 canonical: Arc::clone(&canonical),
                 payload_writable,
-                auth_headers_writable,
+                header_policy,
             }),
         })
         .collect()
@@ -66,7 +74,8 @@ impl AnyHookHandler for ExtensionGuard {
             if canonical.validate_immutable(&modified) {
                 let caps = &self.entry.plugin_ref.trusted_config().capabilities;
                 let mut permitted = canonical.cow_copy();
-                if caps.contains("write_headers")
+                if self.header_policy != HeaderWritePolicy::ReadOnly
+                    && caps.contains("write_headers")
                     && let Some(http) = modified.http
                 {
                     let mut http = http.into_inner();
@@ -78,8 +87,12 @@ impl AnyHookHandler for ExtensionGuard {
                         &mut http.response_headers,
                         canonical.http.as_ref().map(|http| &http.response_headers),
                     )?;
-                    if !self.auth_headers_writable {
-                        preserve_auth_headers(&mut http.request_headers, canonical.http.as_deref());
+                    if self.header_policy != HeaderWritePolicy::All {
+                        preserve_auth_headers(
+                            &mut http.request_headers,
+                            canonical.http.as_deref(),
+                            self.header_policy == HeaderWritePolicy::AllowNewCredentials,
+                        );
                     }
                     // A write-only plugin cannot return headers or metadata it never saw.
                     // Merge header edits while retaining the host's transport metadata.
@@ -145,13 +158,16 @@ fn normalize_headers(
 fn preserve_auth_headers(
     headers: &mut std::collections::HashMap<String, String>,
     original: Option<&cpex::cpex_core::extensions::HttpExtension>,
+    allow_new: bool,
 ) {
     fn protected(name: &str) -> bool {
         ["authorization", "proxy-authorization", "cookie", "x-api-key"]
             .iter()
             .any(|header| name.eq_ignore_ascii_case(header))
     }
-    headers.retain(|name, _| !protected(name));
+    headers.retain(|name, _| {
+        !protected(name) || (allow_new && !original.is_some_and(|http| http.has_request_header(name)))
+    });
     if let Some(original) = original {
         headers.extend(
             original

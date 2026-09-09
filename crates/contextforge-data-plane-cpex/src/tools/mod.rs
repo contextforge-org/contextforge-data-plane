@@ -7,11 +7,11 @@ use rmcp::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
-use tokio::sync::Mutex;
 
 use crate::{
     ArgumentsUpdate, GatewayPluginRuntimeHandle, PluginRequestContext, PreHookResult,
-    cmf::{CmfResponse, Operation, message_payload},
+    cmf::{CmfResponse, message_payload},
+    hooks::Operation,
     runtime::CallState,
 };
 
@@ -99,7 +99,7 @@ fn raw_tool_result(value: Value, is_error: bool) -> CallToolResult {
 
 /// Shared by the final tool response and its progress notifications.
 #[derive(Clone)]
-pub struct ToolHookState(Arc<Mutex<CallState>>);
+pub struct ToolHookState(Arc<CallState>);
 
 impl std::fmt::Debug for ToolHookState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -115,12 +115,11 @@ impl GatewayPluginRuntimeHandle {
         backend_name: &str,
         context: PluginRequestContext,
     ) -> Result<PreHookResult<ToolHookState>, ErrorData> {
-        let (arguments, state) = self
-            .current()?
-            .tool(context.tool.as_ref())?
+        let (request_state, runtime) = self.resolve(Operation::Tool, &context)?;
+        let (arguments, state) = runtime
             .before(
                 (Operation::Tool, tool_name),
-                context.extensions,
+                (request_state, context.extensions),
                 |id| tool_call_payload(request, tool_name, backend_name, id),
                 |payload, _| {
                     let arguments = tool_call_arguments(payload).ok_or_else(|| {
@@ -130,13 +129,13 @@ impl GatewayPluginRuntimeHandle {
                 },
             )
             .await?;
-        Ok(PreHookResult { arguments, state: state.map(|state| ToolHookState(Arc::new(Mutex::new(state)))) })
+        Ok(PreHookResult { arguments, state: state.map(|state| ToolHookState(Arc::new(state))) })
     }
 }
 
 impl ToolHookState {
     pub async fn after_tool_call(self, response: CallToolResult) -> Result<CallToolResult, ErrorData> {
-        self.0.lock().await.after(response).await
+        self.0.after(response).await
     }
 
     /// Returns `None` when a plugin denies a progress or logging notification.
@@ -144,7 +143,7 @@ impl ToolHookState {
     where
         T: Serialize + DeserializeOwned,
     {
-        let mut state = self.0.lock().await;
+        let state = &self.0;
         let event = ToolEvent(event);
         let result = state.invoke(&event).await?;
         if result.is_denied() {

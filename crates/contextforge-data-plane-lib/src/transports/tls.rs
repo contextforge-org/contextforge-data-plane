@@ -62,7 +62,8 @@ impl DownstreamTls {
 
                                 let stream = TokioIo::new(stream);
 
-                                let hyper_service = hyper::service::service_fn(move |request: Request<Incoming>| {
+                                let hyper_service = hyper::service::service_fn(move |mut request: Request<Incoming>| {
+                                    request.extensions_mut().insert(axum::extract::ConnectInfo(addr));
                                     tower_service.clone().call(request)
                                 });
 

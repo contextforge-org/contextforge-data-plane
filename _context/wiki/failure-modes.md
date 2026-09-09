@@ -54,11 +54,12 @@ modern routing. A configured backend alone does not make its objects callable.
 | --- | --- |
 | MCP pre-hook denies | MCP error; no upstream call. |
 | MCP post-hook denies | MCP error; backend operation may already have completed. |
+| HTTP hook error, denial or timeout | Logged; request/response processing continues. |
 | Tool identity or resolved policy context missing | MCP error before backend I/O; no fallback to global policy. |
 | Plugin supplies an error code | That code is used; a denial without one defaults to invalid request `-32600`. |
 | Soft plugin error | Logged; execution can continue under the runtime's soft-error behavior. |
 | Missing or invalid initial plugin config | Runtime initialization fails; gateway startup does not complete. |
-| Invalid plugin reload | New plugin calls fail closed until valid configuration is loaded; already pinned requests keep their runtime. |
+| Invalid plugin reload | New HTTP requests fail with `500` until valid configuration is loaded; already pinned requests keep their policies. |
 | Plugin edits cannot be represented faithfully as the operation's MCP result | MCP error; no fallback to the original unredacted response. |
 
 See [Configuration](config.md#plugin-config-redis-key-contextforgegatewayruntimepluginconfig)

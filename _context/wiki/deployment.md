@@ -60,7 +60,7 @@ configuration-cache freshness and dependency availability.
 - A missing entry or Redis GET error currently produces HTTP `400`; undecodable
   configuration produces `500`. See [Failure Modes](failure-modes.md).
 - Enabled CPEX also needs its initial plugin document and checks for reloads
-  every 30 seconds. An invalid reload fails new plugin calls closed.
+  every 30 seconds. An invalid reload fails new HTTP requests closed.
 
 ## Builds and Images
 

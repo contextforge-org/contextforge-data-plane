@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
-use contextforge_data_plane_cpex::CpexRuntimeRegistry;
+use contextforge_data_plane_cpex::{CpexRuntimeRegistry, GatewayPluginFactory};
 use cpex::cpex_core::config::CpexConfig;
 use serde_json::json;
-
-use contextforge_data_plane_cpex::CmfPluginFactory;
 
 use super::{PromptTestPlugin, TestPlugin, TestPluginFactory};
 
@@ -12,7 +10,10 @@ pub(crate) async fn runtime_with_prompt_plugin(plugin: Arc<PromptTestPlugin>) ->
     let mut runtime = CpexRuntimeRegistry::default();
     let template = Arc::clone(&plugin);
     runtime
-        .register_factory("prompt-test", Box::new(CmfPluginFactory::new(move |config| template.rebuild(config))))
+        .register_factory(
+            "prompt-test",
+            Box::new(GatewayPluginFactory::new(move |config| template.rebuild(config)).with_cmf_hooks()),
+        )
         .expect("prompt test factory registers");
     let config = serde_json::from_value(json!({
         "plugins": [{

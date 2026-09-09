@@ -19,7 +19,7 @@ impl Tcp {
         info!("Starting TCP listener at {}", self.address);
         let tcp_listener: TcpListener = self.try_into()?;
 
-        Ok(axum::serve(tcp_listener, service)
+        Ok(axum::serve(tcp_listener, service.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async {
                 tokio::signal::ctrl_c().await.ok();
                 info!("Shutting down...");
