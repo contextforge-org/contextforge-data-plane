@@ -8,13 +8,6 @@
       "additionalProperties": {
         "$ref": "#/$defs/VirtualHost"
       }
-    },
-    "user_email": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "default": null
     }
   },
   "required": [

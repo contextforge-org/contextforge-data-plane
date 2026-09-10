@@ -73,6 +73,4 @@ pub struct VirtualHost {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct UserConfig {
     pub virtual_hosts: HashMap<VirtualHostId, VirtualHost>,
-    #[serde(default)]
-    pub user_email: Option<String>,
 }

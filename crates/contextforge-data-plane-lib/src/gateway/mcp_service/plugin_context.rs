@@ -1,9 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use contextforge_data_plane_apis::{
-    User,
-    user_store::{BackendMCPGateway, UserConfig},
-};
+use contextforge_data_plane_apis::{User, user_store::BackendMCPGateway};
 use contextforge_data_plane_cpex::PluginRequestContext;
 use cpex::cpex_core::extensions::{
     Extensions, HttpExtension, MCPExtension, MetaExtension, PromptMetadata, RequestExtension, ResourceMetadata,
@@ -42,16 +39,12 @@ pub(super) fn request_context(
         .get::<AuthorizationClaims>()
         .ok_or_else(|| ErrorData::internal_error("Plugin verified claims are missing", None))?;
     let claims = Value::from(claims);
-    let user_config = parts
-        .extensions
-        .get::<UserConfig>()
-        .ok_or_else(|| ErrorData::internal_error("Plugin user configuration is missing", None))?;
     let server_id = parts.extensions.get::<VirtualHostId>().map(|id| id.value().clone());
     let tool = (kind == "tool").then(|| backend.tool_policy_contexts.get(name)).flatten().cloned();
     let canonical_name = tool.as_ref().map_or(name, |tool| tool.name.as_str());
     let user = User::from(principal);
     let subject = SubjectExtension {
-        id: Some(user_config.user_email.as_deref().unwrap_or(user.key()).to_owned()),
+        id: Some(user.key().to_owned()),
         subject_type: Some(SubjectType::User),
         roles: string_set(claims.get("roles")),
         teams: string_set(claims.get("teams")),

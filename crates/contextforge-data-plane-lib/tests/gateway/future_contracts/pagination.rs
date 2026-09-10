@@ -53,7 +53,6 @@ async fn start_paginating_gateway(backend_count: usize) -> Result<GatewayFixture
         .set_config(
             &User::new(TEST_USER_ID),
             &UserConfig {
-                user_email: None,
                 virtual_hosts: HashMap::from([(
                     VIRTUAL_HOST_ID.to_owned(),
                     VirtualHost {

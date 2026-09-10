@@ -139,7 +139,6 @@ the dataplane after removing a key if that cache must be cleared immediately.
 ```text
 UserConfig
   virtual_hosts: HashMap<String, VirtualHost>
-  user_email: String | null                   ← optional control-plane user name
 
 VirtualHost
   backends: HashMap<String, BackendMCPGateway>  ← backend key, not a parsed prefix
@@ -259,8 +258,8 @@ updates, including post-only hooks and tool progress/logging events.
 
 Plugin extensions expose the server-generated request ID, active trace/span,
 canonical target, tool schema/identity, gateway and virtual-server IDs, HTTP
-request data, and verified subject claims. `UserConfig.user_email` supplies the
-control-plane user name when present; otherwise the verified principal is used.
+request data, and verified subject claims. The subject ID is the authenticated
+user key derived from the verified principal.
 Target policy scope is stored in `meta.scope`, separately from subject claims.
 CPEX's condition matcher uses that scope, canonical target, authenticated user,
 server and request content type. Client arguments and plugin state cannot select

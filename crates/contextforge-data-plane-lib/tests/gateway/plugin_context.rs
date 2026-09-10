@@ -106,7 +106,7 @@ async fn extension_header_writes_require_capability_and_auth_override_permission
         assert_eq!(observations[0]["policy_header"], false);
         assert_eq!(observations[1]["policy_header"], writable);
         assert_eq!(observations[1]["auth_header_changed"], auth_override);
-        assert_eq!(observations[1]["subject"], "operator@example.com");
+        assert_eq!(observations[1]["subject"], TEST_USER_ID);
     }
     client.cancel().await.expect("client closes");
     gateway.shutdown().await.expect("gateway stops");
@@ -147,7 +147,6 @@ async fn gateway(runtime: &Arc<CpexRuntimeRegistry>) -> RunningGateway {
     let gateway = start_gateway(TEST_USER_ID, true, Arc::clone(runtime)).await;
     let key = User::new(TEST_USER_ID);
     let mut config = gateway.user_store.get_config(&key).await.expect("user config");
-    config.user_email = Some("operator@example.com".to_owned());
     for host in config.virtual_hosts.values_mut() {
         host.prompts.insert(
             format!("{}-review", gateway.backend_name),
@@ -173,7 +172,7 @@ async fn direct_and_aliased_tools_select_published_policy_and_preserve_context()
     let hooks = ["tool_pre_invoke", "tool_post_invoke"];
     let mut scoped = plugin("scoped", &hooks, true);
     scoped["conditions"] =
-        json!([{"tools": ["gateway_sum"], "tenant_ids": ["team1"], "user_patterns": ["*@example.com"]}]);
+        json!([{"tools": ["gateway_sum"], "tenant_ids": ["team1"], "user_patterns": [TEST_USER_ID]}]);
     let (runtime, seen) = runtime(document(&[plugin("wrong-global", &hooks, true)], &[scoped])).await;
     let gateway = gateway(&runtime).await;
     let client = gateway.connect(TEST_USER_ID).await;
@@ -187,7 +186,7 @@ async fn direct_and_aliased_tools_select_published_policy_and_preserve_context()
     assert_eq!(observations.len(), 4);
     for pair in observations.as_chunks::<2>().0 {
         assert_eq!(pair[0]["plugin"], "scoped");
-        assert_eq!(pair[1]["subject"], "operator@example.com");
+        assert_eq!(pair[1]["subject"], TEST_USER_ID);
         assert_eq!(pair[1]["tenant"], "test_tenant");
         assert_eq!(pair[1]["meta"]["properties"]["tool_id"], "tool-id");
         assert_eq!(pair[1]["mcp"]["tool"]["name"], "gateway_sum");
@@ -280,7 +279,7 @@ async fn capabilities_gate_identity_and_headers_and_plugin_cannot_replace_identi
             assert!(observation["subject"].is_null());
             assert_eq!(observation["headers"], false);
         } else {
-            assert_eq!(observation["subject"], "operator@example.com");
+            assert_eq!(observation["subject"], TEST_USER_ID);
             assert_eq!(observation["headers"], true);
         }
     }
@@ -334,7 +333,7 @@ async fn prompt_and_resource_post_only_hooks_use_global_context_for_direct_and_a
     assert_eq!(observations.len(), 4);
     for observation in observations {
         assert_eq!(observation["plugin"], "global");
-        assert_eq!(observation["subject"], "operator@example.com");
+        assert_eq!(observation["subject"], TEST_USER_ID);
         assert_eq!(observation["count"], 0);
         assert!(observation["request"].is_string());
     }

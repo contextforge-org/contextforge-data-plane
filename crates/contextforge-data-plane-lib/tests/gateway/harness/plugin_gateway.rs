@@ -427,7 +427,6 @@ async fn start_gateway_with_state(
         .set_config(
             &User::new(user),
             &UserConfig {
-                user_email: None,
                 virtual_hosts: HashMap::from([(
                     virtual_host_id.to_owned(),
                     VirtualHost {

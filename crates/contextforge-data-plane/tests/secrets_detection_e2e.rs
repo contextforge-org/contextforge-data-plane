@@ -373,7 +373,6 @@ async fn write_redis_config(redis_port: u16, backend: &RunningBackend) {
 
     let key = rmp_serde::encode::to_vec(&User::new(TEST_USER_ID)).expect("user key encodes");
     let config = UserConfig {
-        user_email: None,
         virtual_hosts: HashMap::from([(
             TEST_VIRTUAL_HOST_ID.to_owned(),
             VirtualHost {

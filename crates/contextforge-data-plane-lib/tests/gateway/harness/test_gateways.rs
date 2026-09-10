@@ -110,7 +110,6 @@ async fn start_counter_gateway_inner(
         .set_config(
             &User::new(user),
             &UserConfig {
-                user_email: None,
                 virtual_hosts: HashMap::from([(
                     VIRTUAL_HOST_ID.to_owned(),
                     VirtualHost { backends, tools, resources, resource_templates: HashMap::new(), prompts },
