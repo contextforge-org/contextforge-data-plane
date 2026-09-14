@@ -1,4 +1,6 @@
 use clap::{Parser, ValueEnum};
+use contextforge_data_plane_apis::user_store::UserConfig;
+
 use http::uri::Authority;
 use jsonwebtoken::DecodingKey;
 use redis::{ConnectionAddr, IntoConnectionInfo, RedisError};
@@ -15,7 +17,7 @@ use thiserror::Error;
 use typed_builder::TypedBuilder;
 use url::Url;
 
-use crate::{authorization::AuthorizationService, user_config_store::UserConfigStore};
+use crate::{authorization::AuthorizationService, config_stores::ConfigStore};
 
 #[derive(Clone)]
 pub struct JwtTokenDecoders {
@@ -27,7 +29,7 @@ pub struct JwtTokenDecoders {
 #[derive(Clone)]
 pub struct ContextForgeDataPlaneAppState {
     pub(crate) authorization_service: Arc<dyn AuthorizationService + Send + Sync>,
-    pub(crate) config_store: Arc<dyn UserConfigStore + Send + Sync>,
+    pub(crate) config_store: Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + Send + Sync>,
     pub(crate) config: Config,
 }
 

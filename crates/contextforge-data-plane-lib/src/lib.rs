@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use axum::{body::Body, middleware, response::Response, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
+use contextforge_data_plane_apis::user_store::UserConfig;
+
 use contextforge_data_plane_cpex::GatewayPluginRuntimeHandle;
 use futures::FutureExt;
 use http::{StatusCode, header, uri::Authority};
@@ -12,18 +14,18 @@ use rmcp::transport::{
 };
 mod authorization;
 mod common;
+mod config_stores;
 mod const_values;
 mod errors;
 mod gateway;
 mod layers;
 mod mcp_standard_headers;
 mod telemetry;
-mod transports;
-
 #[cfg(feature = "with_tools")]
 mod tools;
+mod transports;
 
-mod user_config_store;
+//mod user_config_store;
 pub use common::{RedisClient, RedisConfig, UpstreamConnectionMode};
 use gateway::McpService;
 
@@ -31,8 +33,9 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use transports::{DownstreamTls, Tcp};
 use typed_builder::TypedBuilder;
-pub use user_config_store::RedisUserConfigStore;
-pub use user_config_store::{ConfigStoreError, UserConfigStore};
+//pub use user_config_store::RedisUserConfigStore;
+pub use config_stores::{ConfigStore, ConfigStoreError};
+//
 
 pub use crate::common::*;
 
@@ -41,6 +44,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 use crate::{
     authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor},
+    config_stores::RedisStore,
     layers::{
         claims_id::claims_layer,
         mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
@@ -55,7 +59,7 @@ pub use authorization::{AuthorizationClaims, AuthorizationService, get_authoriza
 #[derive(Clone)]
 pub enum UserConfigStoreType {
     Redis,
-    Test(Arc<dyn UserConfigStore + std::marker::Send + Sync>),
+    Test(Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + std::marker::Send + Sync>),
 }
 
 #[derive(Clone, TypedBuilder)]
@@ -110,7 +114,8 @@ impl Gateway {
             UserConfigStoreType::Redis => Arc::new(get_config_store(&config).await?),
             UserConfigStoreType::Test(store) => store,
         };
-        let user_config_store = user_config_store as Arc<dyn UserConfigStore + Send + Sync>;
+        let user_config_store = user_config_store
+            as Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + std::marker::Send + Sync>;
 
         // RMCP owns Host validation. Keep its Origin validator disabled because
         // mcp_origin_layer enforces exact origin tuples and returns 403 for every
@@ -179,10 +184,10 @@ impl Gateway {
     }
 }
 
-pub async fn get_config_store(config: &Config) -> Result<RedisUserConfigStore> {
+pub async fn get_config_store(config: &Config) -> Result<RedisStore<UserConfig>> {
     let redis_config = RedisConfig::try_from(config)?;
     let cache_expiry = std::time::Duration::from_secs(config.user_config_cache_expiry_seconds);
-    RedisUserConfigStore::new(&RedisClient::try_from(redis_config)?, cache_expiry).await
+    RedisStore::new(&RedisClient::try_from(redis_config)?, cache_expiry).await
 }
 
 async fn health() -> Response {
@@ -205,15 +210,16 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{
-        Config, Gateway, UserConfigStoreType, get_authorization_service,
-        user_config_store::{ConfigStoreError, UserConfigStore},
+        Config, Gateway, UserConfigStoreType,
+        config_stores::{ConfigStore, ConfigStoreError},
+        get_authorization_service,
     };
 
     #[derive(Clone)]
     struct UnusedConfigStore;
 
     #[async_trait]
-    impl UserConfigStore for UnusedConfigStore {
+    impl ConfigStore<User, UserConfig> for UnusedConfigStore {
         async fn get_config<'a>(&self, _key: &'a User) -> Result<UserConfig, ConfigStoreError> {
             unreachable!("mcp header limit rejection must run before config lookup")
         }

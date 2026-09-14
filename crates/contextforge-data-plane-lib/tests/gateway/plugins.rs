@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex as StdMutex};
 
 use contextforge_data_plane_cpex::CpexRuntimeRegistry;
+use contextforge_data_plane_lib::ConfigStore;
 use cpex::cpex_core::cmf::Role;
 use cpex::cpex_core::hooks::types::cmf_hook_names;
 use rmcp::{
@@ -979,7 +980,6 @@ async fn resource_plugin_cannot_route_to_an_unpublished_target() {
 #[tokio::test]
 async fn resource_plugin_rejects_a_target_shared_by_different_backends() {
     use contextforge_data_plane_apis::{User, user_store::ServiceRoute};
-    use contextforge_data_plane_lib::UserConfigStore;
 
     let plugin = Arc::new(
         TestPlugin::new("resource-rewrite", vec![cmf_hook_names::RESOURCE_PRE_FETCH])

@@ -4,7 +4,7 @@ use contextforge_data_plane_apis::{
     User,
     user_store::{BackendMCPGateway, UserConfig, VirtualHost},
 };
-use contextforge_data_plane_lib::{Config, Result, UpstreamConnectionMode, UserConfigStore};
+use contextforge_data_plane_lib::{Config, ConfigStore, Result, UpstreamConnectionMode};
 use rmcp::{
     model::PaginatedRequestParams,
     transport::{

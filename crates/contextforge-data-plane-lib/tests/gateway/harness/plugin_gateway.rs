@@ -13,7 +13,7 @@ use contextforge_data_plane_apis::{
     user_store::{BackendMCPGateway, ServiceRoute, UserConfig, VirtualHost},
 };
 use contextforge_data_plane_cpex::CpexRuntimeRegistry;
-use contextforge_data_plane_lib::{Config, UpstreamConnectionMode, UserConfigStore};
+use contextforge_data_plane_lib::{Config, ConfigStore, UpstreamConnectionMode};
 use http::{HeaderMap, HeaderValue, request::Parts};
 use rmcp::{
     ErrorData, RoleClient, RoleServer, ServerHandler,

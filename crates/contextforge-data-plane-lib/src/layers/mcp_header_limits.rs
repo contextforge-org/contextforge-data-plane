@@ -102,11 +102,11 @@ mod tests {
         Config,
         authorization::{AuthorizationClaims, AuthorizationService},
         common::ContextForgeDataPlaneAppState,
+        config_stores::{ConfigStore, ConfigStoreError},
         layers::{
             claims_id::claims_layer,
             mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
         },
-        user_config_store::{ConfigStoreError, UserConfigStore},
     };
 
     async fn ok() -> Response {
@@ -193,7 +193,7 @@ mod tests {
     struct UnusedConfigStore;
 
     #[async_trait]
-    impl UserConfigStore for UnusedConfigStore {
+    impl ConfigStore<User, UserConfig> for UnusedConfigStore {
         async fn get_config<'a>(&self, _key: &'a User) -> Result<UserConfig, ConfigStoreError> {
             unreachable!("mcp header limit rejection must run before config lookup")
         }

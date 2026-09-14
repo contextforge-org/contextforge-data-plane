@@ -14,7 +14,7 @@ pub struct AuthorizedPrincipal {
     scopes: Vec<String>,
 }
 
-impl<'a> From<&'a AuthorizedPrincipal> for User<'a> {
+impl<'a> From<&'a AuthorizedPrincipal> for User {
     fn from(value: &'a AuthorizedPrincipal) -> Self {
         Self::new(&value.user_id)
     }
