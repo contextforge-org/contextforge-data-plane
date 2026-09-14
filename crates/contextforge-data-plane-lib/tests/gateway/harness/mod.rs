@@ -25,7 +25,7 @@ pub(crate) use client::{
 };
 pub(crate) use compatibility::connect_client_with_protocol;
 use contextforge_data_plane_lib::{
-    Config, DownstreamTransportConfig, ObservabilityConfig, RedisConfig, UpstreamTransportConfig,
+    Config, DownstreamTransportConfig, JwksConfig, ObservabilityConfig, RedisConfig, UpstreamTransportConfig,
 };
 pub(crate) use gateway_fixture::{GatewayFixture, GatewayTestConfig};
 pub(crate) use plugin::{
@@ -48,8 +48,7 @@ pub(crate) use user_config_store::MemoryUserConfigStore;
 pub fn create_default_config() -> Config {
     Config {
         address: None,
-        jwks_url: "http://127.0.0.1:8080/".parse().expect("should work"),
-        jwks_ca_cert_path: None,
+        jwks_config: JwksConfig { url: "http://127.0.0.1:8080/".parse().expect("should work"), ca_cert_path: None },
 
         mcp_standard_header_max_count: 10,
         mcp_standard_header_max_value_bytes: 4096,

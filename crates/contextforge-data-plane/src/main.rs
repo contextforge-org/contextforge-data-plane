@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     };
     let plugin_runtime = plugin_registry.as_ref().map(|runtime| runtime.handle());
 
-    let authorization_service = get_authorization_service(&config)?;
+    let authorization_service = get_authorization_service(&config.jwks_config)?;
 
     let gateway = Gateway::builder()
         .with_config(config)

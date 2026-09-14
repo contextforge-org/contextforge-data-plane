@@ -231,7 +231,7 @@ mod tests {
     async fn production_router_rejects_excessive_mcp_headers_before_auth() {
         let config = Config { mcp_standard_header_max_count: 1, ..Config::default() };
         let app = Gateway::builder()
-            .with_authorization_service(get_authorization_service(&config).expect("this should not fail"))
+            .with_authorization_service(get_authorization_service(&config.jwks_config).expect("this should not fail"))
             .with_config(config)
             .with_session_manager(Arc::new(LocalSessionManager::default()))
             .with_user_config_store_type(UserConfigStoreType::Test(Arc::new(UnusedConfigStore)))

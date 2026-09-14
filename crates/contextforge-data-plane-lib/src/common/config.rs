@@ -171,14 +171,23 @@ impl From<&CliConfig> for UpstreamTransportConfig {
 }
 
 #[derive(Clone, Debug)]
+pub struct JwksConfig {
+    pub url: url::Url,
+    pub ca_cert_path: Option<PathBuf>,
+}
+impl From<&CliConfig> for JwksConfig {
+    fn from(value: &CliConfig) -> Self {
+        let CliConfig { jwks_url, jwks_ca_cert_path, .. } = value.clone();
+        Self { url: jwks_url, ca_cert_path: jwks_ca_cert_path }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Config {
     pub address: Option<SocketAddr>,
 
-    pub jwks_url: url::Url,
-
-    pub jwks_ca_cert_path: Option<PathBuf>,
-
     pub observability_config: ObservabilityConfig,
+    pub jwks_config: JwksConfig,
 
     /// Expiry in seconds for the in-process user config cache in front of
     /// Redis. The control-plane dataplane publisher rewrites UserConfig keys
@@ -365,12 +374,17 @@ mod tests {
 
     use crate::common::config::{DownstreamTransportConfig, UpstreamTransportConfig};
 
+    impl Default for super::JwksConfig {
+        fn default() -> Self {
+            Self { url: "http://127.0.0.1:8080/".parse().expect("should work"), ca_cert_path: None }
+        }
+    }
+
     impl Default for super::Config {
         fn default() -> Self {
             Self {
                 address: None,
-                jwks_url: "http://127.0.0.1:8080/".parse().expect("should work"),
-                jwks_ca_cert_path: None,
+                jwks_config: super::JwksConfig::default(),
                 observability_config: super::ObservabilityConfig::default(),
                 mcp_standard_header_max_count: 10,
                 mcp_standard_header_max_value_bytes: 4096,

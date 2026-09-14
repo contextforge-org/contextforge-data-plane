@@ -29,8 +29,8 @@ pub type RedisClient = redis::Client;
 pub use cli_config::CliConfig;
 pub use config::{
     Config, DEFAULT_MCP_STANDARD_HEADER_MAX_COUNT, DEFAULT_MCP_STANDARD_HEADER_MAX_TOTAL_BYTES,
-    DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES, DownstreamTransportConfig, ObservabilityConfig, OtlpProtocol,
-    RedisConfig, RedisConnectionMode, UpstreamConnectionMode, UpstreamTransportConfig,
+    DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES, DownstreamTransportConfig, JwksConfig, ObservabilityConfig,
+    OtlpProtocol, RedisConfig, RedisConnectionMode, UpstreamConnectionMode, UpstreamTransportConfig,
 };
 
 impl Add<GlobalConfig> for Config {
@@ -56,10 +56,9 @@ impl TryFrom<cli_config::CliConfig> for Config {
         let observability_config = ObservabilityConfig::from(&value);
         let downstream_transport_config = DownstreamTransportConfig::from(&value);
         let upstream_transport_config = UpstreamTransportConfig::from(&value);
+        let jwks_config = JwksConfig::from(&value);
         let CliConfig {
             address,
-            jwks_url,
-            jwks_ca_cert_path,
             runtime_plugins_enabled,
             cel_principal_extractor_path,
             #[cfg(feature = "with_tools")]
@@ -69,8 +68,7 @@ impl TryFrom<cli_config::CliConfig> for Config {
 
         Ok(Self {
             address,
-            jwks_url,
-            jwks_ca_cert_path,
+            jwks_config,
             observability_config,
             downstream_transport_config,
             upstream_transport_config,
