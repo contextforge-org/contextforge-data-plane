@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use contextforge_data_plane_lib::{Config, OtlpProtocol};
+use contextforge_data_plane_lib::{ObservabilityConfig, OtlpProtocol};
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::{MetricExporter, Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig};
@@ -28,7 +28,9 @@ const METRICS_EXPORT_INTERVAL: std::time::Duration = std::time::Duration::from_s
 
 const DEFAULT_LOGGING: &str = "debug,hyper_util=OFF,tower_http=OFF,rmcp=warn,reqwest=warn,rustls=WARN,h2=WARN,opentelemetry_sdk=WARN,opentelemetry-otlp=WARN";
 
-pub fn init_tracing_logging(configuration: &Config) -> Result<Guard, Box<dyn std::error::Error + Send + Sync>> {
+pub fn init_tracing_logging(
+    configuration: &ObservabilityConfig,
+) -> Result<Guard, Box<dyn std::error::Error + Send + Sync>> {
     let registry = Registry::default();
 
     let console_filter =
@@ -120,7 +122,7 @@ pub fn init_tracing_logging(configuration: &Config) -> Result<Guard, Box<dyn std
 /// held alive (via [`Guard`]) for the [`PeriodicReader`]'s background task
 /// to keep exporting.
 fn init_meter_provider(
-    configuration: &Config,
+    configuration: &ObservabilityConfig,
     service_name: &str,
 ) -> Result<Option<SdkMeterProvider>, Box<dyn std::error::Error + Send + Sync>> {
     if configuration.enable_otel_metrics != Some(true) {

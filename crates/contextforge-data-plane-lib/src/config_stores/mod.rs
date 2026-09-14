@@ -1,11 +1,20 @@
+mod global_config_store;
+mod redis_store;
 mod user_config_store;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 
+use lru_time_cache::LruCache;
 use serde::{Deserialize, Serialize};
 
-pub use user_config_store::RedisStore;
+pub use redis_store::RedisStore;
+use tokio::sync::Mutex;
+
+type ConfigCache<V> = Option<Arc<Mutex<LruCache<String, CachedEntry<V>>>>>;
 
 #[derive(Debug, Clone, Deserialize, Serialize, thiserror::Error)]
 pub enum ConfigStoreError {

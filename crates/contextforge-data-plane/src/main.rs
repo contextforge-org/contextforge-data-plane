@@ -6,9 +6,10 @@ mod test_plugins;
 use std::sync::Arc;
 
 use clap::Parser;
+
 use contextforge_data_plane_cpex::CpexRuntimeRegistry;
 use contextforge_data_plane_lib::{
-    Config, Gateway, RedisClient, RedisConfig, UserConfigStoreType, get_authorization_service,
+    CliConfig, Config, Gateway, GlobalConfig, RedisClient, UserConfigStoreType, get_authorization_service,
 };
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rustls::crypto;
@@ -23,8 +24,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let provider = crypto::aws_lc_rs::default_provider();
     _ = provider.install_default();
 
-    let config = Config::parse();
-    let _guard = logging::init_tracing_logging(&config)?;
+    let config = CliConfig::try_parse()?;
+    let config = Config::try_from(config)?;
+    let config = config + GlobalConfig::default();
+
+    let _guard = logging::init_tracing_logging(&config.observability_config)?;
     info!("starting contextforge-data-plane {config:?}");
 
     let plugin_registry = if config.runtime_plugins_enabled.unwrap_or(false) {
@@ -51,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 fn plugin_runtime_from_config(
     config: &Config,
 ) -> Result<CpexRuntimeRegistry, Box<dyn std::error::Error + Send + Sync>> {
-    let redis_client = RedisClient::try_from(RedisConfig::try_from(config)?)?;
+    let redis_client = RedisClient::try_from(config.redis_config.clone())?;
     let plugin_runtime = CpexRuntimeRegistry::with_redis_config(redis_client);
     #[cfg(any(feature = "test-plugins", feature = "plugins"))]
     let plugin_runtime = register_builtin_factories(plugin_runtime)?;

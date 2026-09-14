@@ -13,7 +13,7 @@ use contextforge_data_plane_apis::{
     user_store::{BackendMCPGateway, ServiceRoute, UserConfig, VirtualHost},
 };
 use contextforge_data_plane_cpex::CpexRuntimeRegistry;
-use contextforge_data_plane_lib::{Config, ConfigStore, UpstreamConnectionMode};
+use contextforge_data_plane_lib::{Config, ConfigStore, UpstreamConnectionMode, UpstreamTransportConfig};
 use http::{HeaderMap, HeaderValue, request::Parts};
 use rmcp::{
     ErrorData, RoleClient, RoleServer, ServerHandler,
@@ -456,7 +456,10 @@ async fn start_gateway_with_state(
 
     let fixture = GatewayFixture::start(GatewayTestConfig {
         config: Config {
-            upstream_connection_mode: Some(UpstreamConnectionMode::PlainTextOrTls),
+            upstream_transport_config: UpstreamTransportConfig {
+                upstream_connection_mode: Some(UpstreamConnectionMode::PlainTextOrTls),
+                ..Default::default()
+            },
             runtime_plugins_enabled: Some(runtime_plugins_enabled),
             ..create_default_config()
         },

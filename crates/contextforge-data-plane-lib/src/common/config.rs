@@ -1,56 +1,21 @@
-use clap::{Parser, ValueEnum};
-use contextforge_data_plane_apis::user_store::UserConfig;
+use clap::ValueEnum;
 
 use http::uri::Authority;
-use jsonwebtoken::DecodingKey;
+
 use redis::{ConnectionAddr, IntoConnectionInfo, RedisError};
 use rustls_pki_types::{CertificateDer, PrivatePkcs8KeyDer, pem::PemObject};
-use serde::{Deserialize, Serialize};
+
 use std::{
     fs::{self, File},
     io::{Cursor, Read},
     net::SocketAddr,
     path::PathBuf,
-    sync::Arc,
 };
 use thiserror::Error;
-use typed_builder::TypedBuilder;
+
 use url::Url;
 
-use crate::{authorization::AuthorizationService, config_stores::ConfigStore};
-
-#[derive(Clone)]
-pub struct JwtTokenDecoders {
-    pub rs: Option<DecodingKey>,
-    pub hmac_sha: Option<DecodingKey>,
-}
-
-#[allow(unused)]
-#[derive(Clone)]
-pub struct ContextForgeDataPlaneAppState {
-    pub(crate) authorization_service: Arc<dyn AuthorizationService + Send + Sync>,
-    pub(crate) config_store: Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + Send + Sync>,
-    pub(crate) config: Config,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, TypedBuilder)]
-pub struct User {
-    email: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    full_name: Option<String>,
-    is_admin: bool,
-    auth_provider: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, TypedBuilder)]
-pub struct Scopes {
-    server_id: Option<String>,
-    permissions: Vec<String>,
-    ip_restrictions: Vec<String>,
-    time_restrictions: Option<serde_json::Value>,
-}
-
-pub type RedisClient = redis::Client;
+use crate::{CliConfig, RedisClient};
 
 #[derive(Debug, Clone)]
 pub enum RedisConfig {
@@ -100,16 +65,6 @@ pub enum RedisConnectionMode {
     Mtls,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-#[derive(Default)]
-pub enum LogRotation {
-    Minutely,
-    #[default]
-    Hourly,
-    Daily,
-    Never,
-}
-
 /// Wire protocol used to export OpenTelemetry data to the collector / backend.
 ///
 /// `Grpc` targets the standard OTLP/gRPC port (e.g. `4317`) used by
@@ -124,43 +79,23 @@ pub enum OtlpProtocol {
     HttpProtobuf,
 }
 
-#[derive(Debug, Clone, Parser)]
-#[command(name = "contextforge-data-plane")]
-#[command(about = "Minimal, fast, experimental data plane for ContextForge")]
-pub struct Config {
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ADDRESS")]
-    pub address: Option<SocketAddr>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWKS_URL")]
-    pub jwks_url: url::Url,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH")]
-    pub jwks_ca_cert_path: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OPEN_TELEMETRY")]
+#[derive(Clone, Debug, Default)]
+pub struct ObservabilityConfig {
     pub enable_open_telemetry: Option<bool>,
 
-    /// OTLP exporter endpoint. For `grpc` this is the collector address
-    /// (e.g. `http://127.0.0.1:4317`). For `http-protobuf` this must be the
-    /// full traces URL (e.g. `http://langfuse-web:3000/api/public/otel/v1/traces`
-    /// for Langfuse, or `http://collector:4318/v1/traces` for the OTel Collector).
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_ENDPOINT")]
     pub otlp_endpoint: Option<http::Uri>,
 
     /// OTLP wire protocol. Use `http-protobuf` when exporting directly to
     /// Langfuse (it does not accept gRPC).
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_PROTOCOL")]
     pub otlp_protocol: Option<OtlpProtocol>,
 
     /// Additional headers to attach to every OTLP request, formatted as
     /// `key1=value1,key2=value2`. Used to pass authentication (for example
     /// Langfuse's `Authorization=Basic <base64(public:secret)>`).
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_HEADERS")]
     pub otlp_headers: Option<String>,
 
     /// Overrides the `service.name` OpenTelemetry resource attribute.
     /// Defaults to `CONTEXTFORGE-DATA-PLANE`.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_OTEL_SERVICE_NAME")]
     pub otlp_service_name: Option<String>,
 
     /// Enables OTLP export of HTTP server metrics (request counts, latency
@@ -168,7 +103,6 @@ pub struct Config {
     /// Independent from `enable_open_telemetry` so traces and metrics can be
     /// turned on individually. Langfuse does not ingest metrics, so this
     /// typically targets an OpenTelemetry Collector.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_METRICS")]
     pub enable_otel_metrics: Option<bool>,
 
     /// OTLP metrics endpoint. For `grpc` defaults to `http://127.0.0.1:4317`;
@@ -176,104 +110,107 @@ pub struct Config {
     /// Kept separate from `otlp_endpoint` so traces and metrics can be routed
     /// to different backends (typical: traces to Langfuse, metrics to an
     /// OTel Collector).
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")]
     pub otlp_metrics_endpoint: Option<http::Uri>,
+}
 
-    /// Maximum number of MCP standard headers accepted on a single request.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_MCP_STANDARD_HEADER_MAX_COUNT", default_value_t = DEFAULT_MCP_STANDARD_HEADER_MAX_COUNT)]
-    pub mcp_standard_header_max_count: usize,
+impl From<&CliConfig> for ObservabilityConfig {
+    fn from(value: &CliConfig) -> Self {
+        let CliConfig {
+            enable_open_telemetry,
+            otlp_endpoint,
+            otlp_protocol,
+            otlp_headers,
+            otlp_service_name,
+            enable_otel_metrics,
+            otlp_metrics_endpoint,
+            ..
+        } = value.clone();
+        Self {
+            enable_open_telemetry,
+            otlp_endpoint,
+            otlp_protocol,
+            otlp_headers,
+            otlp_service_name,
+            enable_otel_metrics,
+            otlp_metrics_endpoint,
+        }
+    }
+}
 
-    /// Maximum byte length accepted for a single MCP standard header value.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_MCP_STANDARD_HEADER_MAX_VALUE_BYTES", default_value_t = DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES)]
-    pub mcp_standard_header_max_value_bytes: usize,
-
-    /// Approximate request-level aggregate bytes accepted across all matched
-    /// MCP standard header names and values.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_MCP_STANDARD_HEADER_MAX_TOTAL_BYTES", default_value_t = DEFAULT_MCP_STANDARD_HEADER_MAX_TOTAL_BYTES)]
-    pub mcp_standard_header_max_total_bytes: usize,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_NUMBER_OF_CPUS")]
-    pub number_of_cpus: Option<usize>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_SINGLE_RUNTIME")]
-    pub single_runtime: Option<bool>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_RUNTIME_PLUGINS_ENABLED")]
-    pub runtime_plugins_enabled: Option<bool>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_TLS_ADDRESS")]
+#[derive(Clone, Debug, Default)]
+pub struct DownstreamTransportConfig {
     pub tls_address: Option<SocketAddr>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_TLS_SERVER_PRIVATE_KEY")]
     pub server_private_key: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_TLS_SERVER_CERTIFICATE")]
     pub server_certificate: Option<PathBuf>,
+}
+impl From<&CliConfig> for DownstreamTransportConfig {
+    fn from(value: &CliConfig) -> Self {
+        let CliConfig { tls_address, server_private_key, server_certificate, .. } = value.clone();
+        Self { tls_address, server_private_key, server_certificate }
+    }
+}
 
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE")]
+#[derive(Clone, Debug, Default)]
+pub struct UpstreamTransportConfig {
     pub upstream_connection_mode: Option<UpstreamConnectionMode>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_TLS_UPSTREAM_PRIVATE_KEY")]
     pub upstream_private_key: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_TLS_UPSTREAM_CERTIFICATE")]
     pub upstream_certificate: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_TLS_UPSTREAM_TRUST_BUNDLE")]
     pub upstream_trust_bundle: Option<PathBuf>,
+}
+impl From<&CliConfig> for UpstreamTransportConfig {
+    fn from(value: &CliConfig) -> Self {
+        let CliConfig {
+            upstream_connection_mode,
+            upstream_private_key,
+            upstream_certificate,
+            upstream_trust_bundle,
+            ..
+        } = value.clone();
+        Self { upstream_connection_mode, upstream_private_key, upstream_certificate, upstream_trust_bundle }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub address: Option<SocketAddr>,
+
+    pub jwks_url: url::Url,
+
+    pub jwks_ca_cert_path: Option<PathBuf>,
+
+    pub observability_config: ObservabilityConfig,
 
     /// Expiry in seconds for the in-process user config cache in front of
     /// Redis. The control-plane dataplane publisher rewrites UserConfig keys
     /// every 60s, so this bounds how stale a subject's config can get.
     /// 0 disables caching and reads Redis on every request.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_USER_CONFIG_CACHE_EXPIRY_SECONDS", default_value_t = 60)]
     pub user_config_cache_expiry_seconds: u64,
 
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_REDIS_HOSTNAME")]
-    pub redis_address: String,
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_REDIS_PORT")]
-    pub redis_port: u16,
+    pub redis_config: RedisConfig,
 
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE")]
-    pub redis_mode: RedisConnectionMode,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_REDIS_TLS_REDIS_TRUST_BUNDLE")]
-    pub redis_tls_trust_bundle: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_REDIS_TLS_REDIS_CLIENT_PRIVATE_KEY")]
-    pub redis_tls_client_private_key: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_REDIS_TLS_REDIS_CLIENT_CERTIFICATE")]
-    pub redis_tls_client_certificate: Option<PathBuf>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_LOG_NAME")]
-    pub log_name: Option<String>,
-
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_LOG_ROTATION")]
-    pub log_rotation: Option<LogRotation>,
-
-    #[arg(
-        long,
-        env = "CONTEXTFORGE_GATEWAY_RS_MCP_ALLOWED_ORIGINS",
-        value_delimiter = ',',
-        num_args = 1..
-    )]
-    pub mcp_allowed_origins: Option<Vec<Url>>,
-
-    #[arg(
-        long,
-        env = "CONTEXTFORGE_GATEWAY_RS_MCP_ALLOWED_HOSTS",
-        value_delimiter = ',',
-        num_args = 1..
-    )]
-    pub mcp_allowed_hosts: Option<Vec<Authority>>,
+    pub downstream_transport_config: DownstreamTransportConfig,
+    pub upstream_transport_config: UpstreamTransportConfig,
 
     #[cfg(feature = "with_tools")]
-    #[arg(long)]
     pub token_verification_private_key: PathBuf,
 
-    #[arg(long)]
     pub cel_principal_extractor_path: Option<PathBuf>,
+
+    pub mcp_allowed_origins: Option<Vec<Url>>,
+
+    pub mcp_allowed_hosts: Option<Vec<Authority>>,
+
+    /// Maximum number of MCP standard headers accepted on a single request.
+    pub mcp_standard_header_max_count: usize,
+
+    /// Maximum byte length accepted for a single MCP standard header value.
+    pub mcp_standard_header_max_value_bytes: usize,
+
+    /// Approximate request-level aggregate bytes accepted across all matched
+    /// MCP standard header names and values.
+    pub mcp_standard_header_max_total_bytes: usize,
+
+    pub runtime_plugins_enabled: Option<bool>,
 }
 
 pub const DEFAULT_MCP_STANDARD_HEADER_MAX_COUNT: usize = 32;
@@ -286,8 +223,8 @@ pub enum ConfigValidationError {
     RedisConfigurationError(String),
 }
 
-impl TryFrom<&Config> for RedisConfig {
-    fn try_from(value: &Config) -> Result<Self, Self::Error> {
+impl TryFrom<&CliConfig> for RedisConfig {
+    fn try_from(value: &CliConfig) -> Result<Self, Self::Error> {
         let _: Authority = format!("{}:{}", value.redis_address, value.redis_port)
             .parse::<Authority>()
             .map_err(|e| ConfigValidationError::RedisConfigurationError(e.to_string()))?;
@@ -381,10 +318,10 @@ fn validate_key(path: &PathBuf) -> Result<Vec<u8>, ConfigValidationError> {
     Ok(buf)
 }
 
-impl TryFrom<&Config> for reqwest::Client {
+impl TryFrom<&UpstreamTransportConfig> for reqwest::Client {
     type Error = crate::Error;
 
-    fn try_from(config: &Config) -> Result<Self, Self::Error> {
+    fn try_from(config: &UpstreamTransportConfig) -> Result<Self, Self::Error> {
         let builder = reqwest::Client::builder();
         let builder = match config.upstream_connection_mode.as_ref() {
             None | Some(UpstreamConnectionMode::TlsOnly) => builder.https_only(true),
@@ -408,7 +345,7 @@ impl TryFrom<&Config> for reqwest::Client {
     }
 }
 
-fn extract_identity(config: &Config) -> crate::Result<reqwest::Identity> {
+fn extract_identity(config: &UpstreamTransportConfig) -> crate::Result<reqwest::Identity> {
     match (config.upstream_private_key.as_ref(), config.upstream_certificate.as_ref()) {
         (Some(private_key), Some(certificate)) => {
             let mut cert = fs::read(certificate)?;
@@ -426,49 +363,30 @@ mod tests {
     #[cfg(feature = "with_tools")]
     use std::{path::PathBuf, str::FromStr};
 
-    use crate::Config;
+    use crate::common::config::{DownstreamTransportConfig, UpstreamTransportConfig};
 
-    impl Default for Config {
+    impl Default for super::Config {
         fn default() -> Self {
             Self {
                 address: None,
                 jwks_url: "http://127.0.0.1:8080/".parse().expect("should work"),
                 jwks_ca_cert_path: None,
-                enable_open_telemetry: None,
-                otlp_endpoint: None,
-                otlp_protocol: None,
-                otlp_headers: None,
-                otlp_service_name: None,
-                enable_otel_metrics: None,
-                otlp_metrics_endpoint: None,
+                observability_config: super::ObservabilityConfig::default(),
                 mcp_standard_header_max_count: 10,
                 mcp_standard_header_max_value_bytes: 4096,
                 mcp_standard_header_max_total_bytes: 4096,
-                number_of_cpus: None,
-                single_runtime: None,
                 runtime_plugins_enabled: None,
-                tls_address: None,
-                server_private_key: None,
-                server_certificate: None,
-                upstream_connection_mode: None,
-                upstream_private_key: None,
-                upstream_certificate: None,
-                upstream_trust_bundle: None,
+
                 user_config_cache_expiry_seconds: 10,
-                redis_address: String::new(),
-                redis_port: 0,
-                redis_mode: super::RedisConnectionMode::PlainText,
-                redis_tls_trust_bundle: None,
-                redis_tls_client_private_key: None,
-                redis_tls_client_certificate: None,
-                log_name: None,
-                log_rotation: None,
+                redis_config: super::RedisConfig::PlainText { host: String::new(), port: 0 },
                 mcp_allowed_origins: None,
                 mcp_allowed_hosts: None,
                 cel_principal_extractor_path: None,
 
                 #[cfg(feature = "with_tools")]
                 token_verification_private_key: PathBuf::from_str("./assets/jwt.key").expect("This should work"),
+                downstream_transport_config: DownstreamTransportConfig::default(),
+                upstream_transport_config: UpstreamTransportConfig::default(),
             }
         }
     }

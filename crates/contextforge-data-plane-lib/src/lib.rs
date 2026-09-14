@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use axum::{body::Body, middleware, response::Response, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
-use contextforge_data_plane_apis::user_store::UserConfig;
 
 use contextforge_data_plane_cpex::GatewayPluginRuntimeHandle;
 use futures::FutureExt;
@@ -25,7 +24,6 @@ mod telemetry;
 mod tools;
 mod transports;
 
-//mod user_config_store;
 pub use common::{RedisClient, RedisConfig, UpstreamConnectionMode};
 use gateway::McpService;
 
@@ -33,9 +31,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use transports::{DownstreamTls, Tcp};
 use typed_builder::TypedBuilder;
-//pub use user_config_store::RedisUserConfigStore;
+
 pub use config_stores::{ConfigStore, ConfigStoreError};
-//
 
 pub use crate::common::*;
 
@@ -80,7 +77,8 @@ impl Gateway {
 
         let mut handlers = vec![];
 
-        match (Option::<Tcp>::try_from(&config), Option::<DownstreamTls>::try_from(&config)) {
+        match (Option::<Tcp>::try_from(&config), Option::<DownstreamTls>::try_from(&config.downstream_transport_config))
+        {
             (Ok(Some(tcp)), Ok(Some(tls))) => {
                 handlers.push(tcp.handle_tcp(app.clone()).boxed());
                 handlers.push(tls.handle_tls(app.clone()).boxed());
@@ -127,7 +125,7 @@ impl Gateway {
         } else {
             StreamableHttpServerConfig::default().disable_allowed_hosts().disable_allowed_origins()
         };
-        let reqwest_backend_client = reqwest::Client::try_from(&config)?;
+        let reqwest_backend_client = reqwest::Client::try_from(&config.upstream_transport_config)?;
 
         // Create streamable HTTP service
         let mcp_service: StreamableHttpService<McpService, LocalSessionManager> = StreamableHttpService::new(
@@ -185,7 +183,7 @@ impl Gateway {
 }
 
 pub async fn get_config_store(config: &Config) -> Result<RedisStore<UserConfig>> {
-    let redis_config = RedisConfig::try_from(config)?;
+    let redis_config = config.redis_config.clone();
     let cache_expiry = std::time::Duration::from_secs(config.user_config_cache_expiry_seconds);
     RedisStore::new(&RedisClient::try_from(redis_config)?, cache_expiry).await
 }

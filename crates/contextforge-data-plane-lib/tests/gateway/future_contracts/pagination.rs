@@ -4,7 +4,7 @@ use contextforge_data_plane_apis::{
     User,
     user_store::{BackendMCPGateway, UserConfig, VirtualHost},
 };
-use contextforge_data_plane_lib::{Config, ConfigStore, Result, UpstreamConnectionMode};
+use contextforge_data_plane_lib::{Config, ConfigStore, Result, UpstreamConnectionMode, UpstreamTransportConfig};
 use rmcp::{
     model::PaginatedRequestParams,
     transport::{
@@ -68,7 +68,10 @@ async fn start_paginating_gateway(backend_count: usize) -> Result<GatewayFixture
 
     GatewayFixture::start(GatewayTestConfig {
         config: Config {
-            upstream_connection_mode: Some(UpstreamConnectionMode::PlainTextOrTls),
+            upstream_transport_config: UpstreamTransportConfig {
+                upstream_connection_mode: Some(UpstreamConnectionMode::PlainTextOrTls),
+                ..Default::default()
+            },
             ..create_default_config()
         },
         user_store: store,
