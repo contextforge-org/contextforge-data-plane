@@ -51,14 +51,18 @@ backends without recompiling a shared support tree for every feature file.
 | `gateway/{tools,prompts,resources,subscriptions}.rs` | Active routed operations and exact routing failures. |
 | `gateway/plugins.rs` | Gateway-owned CPEX ordering, mutation, denial, progress, and prompt seams using deterministic recording plugins. Resource coverage includes direct and aliased URIs, text/blob conversion, canonical pre-hook URIs, published-target rewrites, rejection of unpublished targets, metadata preservation, and pre/post denial. Concrete plugin behavior stays in each plugin crate. |
 | `gateway/harness/` | Authentication, modern and compatibility clients, in-memory configuration, concrete mock backends, and owned server fixtures. |
-| `gateway/future_contracts/` | Deferred fanout, pagination, TLS, completions, subscriptions, and cancellation contracts. |
+| `gateway/future_contracts/` | Deferred fanout, pagination, TLS, completions, and subscriptions contracts. |
+
+The active plugin suite verifies modern downstream cancellation reaches the
+backend, including cancellation before the response stream starts. The regression
+uses a three-second timeout so a cancellation deadlock fails promptly.
 
 `TestServer` binds `127.0.0.1:0` before spawning, uses cooperative
 cancellation, and has a `Drop` fallback. `GatewayFixture` owns the gateway and
 all backend servers. Tests should request the minimum topology: one virtual host
 and one backend by default, with extra backends declared explicitly by the case.
 
-The workspace currently keeps 13 ignored tests: 11 library future contracts
+The workspace currently keeps 12 ignored tests: 10 library future contracts
 and two real-process Redis/binary E2E tests. Ignored tests are not dead tests:
 keep them compiling, keep their intended assertions, give each a concrete
 blocker reason, and list them with:

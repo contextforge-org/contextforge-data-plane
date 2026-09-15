@@ -610,6 +610,35 @@ async fn post_hook_deny_drops_progress_notifications_without_failing_call() {
     assert!(progress.lock().expect("progress lock poisoned").is_empty());
 }
 
+#[tokio::test]
+async fn downstream_cancellation_is_relayed_to_backend() {
+    tokio::time::timeout(std::time::Duration::from_secs(3), assert_downstream_cancellation())
+        .await
+        .expect("downstream cancellation relay completes within three seconds");
+}
+
+async fn assert_downstream_cancellation() {
+    let gateway = start_gateway(TEST_USER_ID, true, Arc::new(CpexRuntimeRegistry::default())).await;
+    let service = crate::harness::connect_modern_client(
+        gateway.gateway_url(),
+        crate::harness::create_client(TEST_USER_ID),
+        crate::harness::modern_client_info(),
+    )
+    .await;
+
+    let handle = service
+        .send_cancellable_request(
+            ClientRequest::CallToolRequest(Request::new(CallToolRequestParams::new("wait_for_cancellation"))),
+            PeerRequestOptions::no_options(),
+        )
+        .await
+        .expect("wait_for_cancellation request is sent");
+    wait_for_event_count(&gateway.backend_state.calls, 1).await;
+
+    handle.cancel(Some("client gave up".to_owned())).await.expect("cancellation is sent");
+    wait_for_event_count(&gateway.backend_state.cancellations, 1).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn post_hook_can_return_raw_cmf_result_content() {
     let plugin = Arc::new(TestPlugin::new("post", vec![cmf_hook_names::TOOL_POST_INVOKE]).with_raw_post_rewrite());
