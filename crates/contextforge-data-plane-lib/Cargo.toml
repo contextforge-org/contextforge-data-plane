@@ -24,7 +24,7 @@ tokio-util = "0.7"
 axum.workspace = true
 axum-otel-metrics = "0.14"
 tower-http = { workspace = true, features = ["cors", "trace"] }
-tower = "0.5.3"
+tower.workspace = true
 http.workspace = true
 futures = { version = "0.3", features = ["std", "alloc"] }
 jsonwebtoken.workspace = true

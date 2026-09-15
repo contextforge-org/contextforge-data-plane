@@ -9,5 +9,8 @@ mod runtime;
 mod traces;
 
 pub use config::{ObservabilityConfig, OtlpProtocol};
-pub use propagation::{ExtractingMakeSpan, inject_current_context};
+pub use propagation::{
+    CORRELATION_ID_HEADER, ExtractingMakeSpan, RequestObservabilityContext, current_request_context,
+    inject_current_context, request_context_layer,
+};
 pub use runtime::{Guard, init_tracing_logging};

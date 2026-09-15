@@ -7,6 +7,8 @@ mod compatibility;
 mod completions;
 #[path = "gateway/future_contracts/mod.rs"]
 mod future_contracts;
+#[path = "gateway/observability.rs"]
+mod observability;
 #[path = "gateway/plugins.rs"]
 mod plugins;
 #[path = "gateway/prompts.rs"]

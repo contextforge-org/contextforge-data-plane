@@ -620,16 +620,19 @@ dependencies = [
 name = "contextforge-data-plane-observability"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "http",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "tokio",
  "tonic",
+ "tower",
  "tower-http 0.7.1",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

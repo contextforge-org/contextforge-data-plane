@@ -41,6 +41,8 @@ pub(super) async fn connect_backend_for_request(
 ) -> Result<RunningService<RoleClient, GatewayBackendClient>, ErrorData> {
     let mut headers = HashMap::new();
     let downstream_headers = cx.extensions.get::<Parts>().map(|parts| &parts.headers);
+    let request_context =
+        cx.extensions.get::<Parts>().and_then(|parts| parts.extensions.get::<crate::RequestObservabilityContext>());
 
     if let Some(host) = backend.url.host_str()
         && backend.url.scheme() == "https"
@@ -54,7 +56,7 @@ pub(super) async fn connect_backend_for_request(
     }
 
     apply_header_config(&mut headers, backend, downstream_headers);
-    contextforge_data_plane_observability::inject_current_context(&mut headers);
+    contextforge_data_plane_observability::inject_current_context(&mut headers, request_context);
 
     let config = StreamableHttpClientTransportConfig::with_uri(backend.url.to_string()).custom_headers(headers);
     let transport = StreamableHttpClientTransport::with_client(mcp_service.http_client.clone(), config);
@@ -131,7 +133,7 @@ fn apply_header_config(
 }
 
 /// Returns `true` for headers that config must never touch:
-/// - Gateway-managed: `Host`
+/// - Gateway-managed: `Host`, `X-Correlation-ID`
 /// - Body-framing: `Content-Length`, `Content-Type` (gateway owns framing; forwarding corrupts body or enables encoding-dispatch bypass)
 /// - Hop-by-hop (RFC 7230 §6.1): `Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailer`, `Trailers`, `Transfer-Encoding`, `Upgrade`
 /// - Non-standard hop-by-hop: `Proxy-Connection` (must not cross gateway boundary)
@@ -142,6 +144,7 @@ fn apply_header_config(
 fn is_protected_header(name: &http::HeaderName) -> bool {
     const PROTECTED: &[&str] = &[
         "host",
+        "x-correlation-id",
         // body-framing: gateway owns these; forwarding corrupts framing or enables encoding-dispatch bypass
         "content-length",
         "content-type",
@@ -281,6 +284,17 @@ mod tests {
         );
         apply_header_config(&mut headers, &cfg, Some(&ds));
         assert!(headers.is_empty(), "no RMCP-reserved header must reach the upstream config");
+    }
+
+    #[test]
+    fn correlation_id_cannot_be_configured_as_a_backend_header() {
+        let mut headers = HashMap::new();
+        let ds = downstream(&[("X-Correlation-ID", "downstream-id")]);
+        let cfg = backend(&["x-correlation-id"], &[("X-Correlation-ID", "configured-id")], &["x-correlation-id"]);
+
+        apply_header_config(&mut headers, &cfg, Some(&ds));
+
+        assert!(headers.is_empty(), "request correlation is owned by the gateway");
     }
 
     #[test]
