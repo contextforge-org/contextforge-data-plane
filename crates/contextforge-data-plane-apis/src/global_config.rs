@@ -1,7 +1,8 @@
 use http::uri::InvalidUri;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalConfig {
     /// Maximum number of MCP standard headers accepted on a single request.
     pub mcp_standard_header_max_count: Option<usize>,
@@ -17,7 +18,7 @@ pub struct GlobalConfig {
     pub mcp_allowed_hosts: Option<Vec<Authority>>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Authority {
     pub hostname: String,
     pub port: u16,

@@ -1,24 +1,72 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "User",
+  "title": "GlobalConfig",
   "type": "object",
   "properties": {
-    "name": {
-      "$ref": "#/$defs/KeyType"
+    "mcp_standard_header_max_count": {
+      "description": "Maximum number of MCP standard headers accepted on a single request.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0
     },
-    "key": {
-      "type": "string"
+    "mcp_standard_header_max_value_bytes": {
+      "description": "Maximum byte length accepted for a single MCP standard header value.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0
+    },
+    "mcp_standard_header_max_total_bytes": {
+      "description": "Approximate request-level aggregate bytes accepted across all matched\nMCP standard header names and values.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0
+    },
+    "mcp_allowed_origins": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string",
+        "format": "uri"
+      }
+    },
+    "mcp_allowed_hosts": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/Authority"
+      }
     }
   },
-  "required": [
-    "name",
-    "key"
-  ],
   "$defs": {
-    "KeyType": {
-      "type": "string",
-      "enum": [
-        "UserConfig"
+    "Authority": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535
+        }
+      },
+      "required": [
+        "hostname",
+        "port"
       ]
     }
   }
