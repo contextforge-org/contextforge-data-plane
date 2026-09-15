@@ -4,8 +4,9 @@ use crate::{authorization::AuthorizationService, config_stores::ConfigStore};
 
 pub use contextforge_data_plane_apis::GlobalConfig;
 pub use contextforge_data_plane_apis::user_store::UserConfig;
+use http::uri::Authority;
 use serde::{Deserialize, Serialize};
-use std::{ops::Add, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use typed_builder::TypedBuilder;
 
 #[allow(unused)]
@@ -33,19 +34,24 @@ pub use config::{
     OtlpProtocol, RedisConfig, RedisConnectionMode, UpstreamConnectionMode, UpstreamTransportConfig,
 };
 
-impl Add<GlobalConfig> for Config {
-    type Output = Config;
-
-    fn add(mut self, rhs: GlobalConfig) -> Self::Output {
+impl Config {
+    pub fn merge(mut self, rhs: GlobalConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         self.mcp_standard_header_max_count =
             rhs.mcp_standard_header_max_count.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_COUNT);
         self.mcp_standard_header_max_total_bytes =
             rhs.mcp_standard_header_max_total_bytes.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES);
         self.mcp_standard_header_max_value_bytes =
             rhs.mcp_standard_header_max_value_bytes.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES);
-        self.mcp_allowed_hosts = rhs.mcp_allowed_hosts;
+
+        if let Some(hosts) = rhs.mcp_allowed_hosts {
+            self.mcp_allowed_hosts =
+                Some(hosts.into_iter().map(Authority::try_from).collect::<Result<Vec<Authority>, _>>()?);
+        } else {
+            self.mcp_allowed_hosts = None;
+        }
+
         self.mcp_allowed_origins = rhs.mcp_allowed_origins;
-        self
+        Ok(self)
     }
 }
 

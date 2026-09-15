@@ -32,7 +32,10 @@ use tower_http::trace::TraceLayer;
 use transports::{DownstreamTls, Tcp};
 use typed_builder::TypedBuilder;
 
-pub use config_stores::{ConfigStore, ConfigStoreError};
+pub use config_stores::{ConfigStore, ConfigStoreError, get_global_config};
+
+#[cfg(feature = "with_tools")]
+pub use config_stores::set_global_config;
 
 pub use crate::common::*;
 

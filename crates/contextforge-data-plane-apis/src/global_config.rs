@@ -1,6 +1,7 @@
-use http::uri::Authority;
+use http::uri::InvalidUri;
+use serde::{Deserialize, Serialize};
 use url::Url;
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GlobalConfig {
     /// Maximum number of MCP standard headers accepted on a single request.
     pub mcp_standard_header_max_count: Option<usize>,
@@ -12,5 +13,20 @@ pub struct GlobalConfig {
     /// MCP standard header names and values.
     pub mcp_standard_header_max_total_bytes: Option<usize>,
     pub mcp_allowed_origins: Option<Vec<Url>>,
+
     pub mcp_allowed_hosts: Option<Vec<Authority>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Authority {
+    pub hostname: String,
+    pub port: u16,
+}
+
+impl TryFrom<Authority> for http::uri::Authority {
+    type Error = InvalidUri;
+
+    fn try_from(value: Authority) -> Result<Self, Self::Error> {
+        http::uri::Authority::try_from(format!("{}:{}", value.hostname, value.port))
+    }
 }

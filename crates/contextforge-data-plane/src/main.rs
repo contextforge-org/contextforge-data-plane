@@ -9,7 +9,7 @@ use clap::Parser;
 
 use contextforge_data_plane_cpex::CpexRuntimeRegistry;
 use contextforge_data_plane_lib::{
-    CliConfig, Config, Gateway, GlobalConfig, RedisClient, UserConfigStoreType, get_authorization_service,
+    CliConfig, Config, ConfigStoreError, Gateway, RedisClient, UserConfigStoreType, get_authorization_service,
 };
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rustls::crypto;
@@ -26,10 +26,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let config = CliConfig::try_parse()?;
     let config = Config::try_from(config)?;
-    let config = config + GlobalConfig::default();
 
     let _guard = logging::init_tracing_logging(&config.observability_config)?;
     info!("starting contextforge-data-plane {config:?}");
+
+    let config = match contextforge_data_plane_lib::get_global_config(&config.redis_config).await {
+        Ok(global_config) => config.merge(global_config)?,
+        Err(ConfigStoreError::NoDataForKey) => {
+            info!("Starting without GlobalConfiguration");
+            config
+        },
+        Err(e) => return Err(e.to_string().into()),
+    };
 
     let plugin_registry = if config.runtime_plugins_enabled.unwrap_or(false) {
         Some(Arc::new(plugin_runtime_from_config(&config)?))

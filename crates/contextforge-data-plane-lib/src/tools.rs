@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{Router, get, post},
 };
-use contextforge_data_plane_apis::{User as CFUser, user_store::UserConfig};
+use contextforge_data_plane_apis::{GlobalConfig, User as CFUser, user_store::UserConfig};
 use http::{
     StatusCode,
     header::{self, CACHE_CONTROL},
@@ -23,6 +23,7 @@ const JWKS_CACHE_CONTROL: &str = "public, max-age=300, must-revalidate";
 const TOKEN_PATH: &str = "/admin/tokens/{tenant_id}/{user_id}";
 const JWKS_PATH: &str = "/admin/.well-known/jwks.json";
 const CONFIGURE_USER_PATH: &str = "/admin/userconfigs/{user_id}";
+const CONFIGURE_GLOBAL_CONFIG_PATH: &str = "/admin/globalconfig";
 
 #[derive(Debug, Deserialize)]
 pub struct TokenQuery {
@@ -52,6 +53,7 @@ pub fn add_tools(router: Router<ContextForgeDataPlaneAppState>) -> Router<Contex
         .route(TOKEN_PATH, post(get_custom_token))
         .route(JWKS_PATH, get(get_jwks))
         .route(CONFIGURE_USER_PATH, post(configure_user))
+        .route(CONFIGURE_GLOBAL_CONFIG_PATH, post(configure_dataplane))
 }
 
 pub async fn get_custom_token(
@@ -131,6 +133,26 @@ pub async fn configure_user(
     Json(user_config): Json<UserConfig>,
 ) -> Response {
     if state.config_store.set_config(&CFUser::new(&user_id), &user_config).await.is_ok() {
+        Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("Added"))
+            .expect("Expecting this to work")
+    } else {
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("Problem with encoding "))
+            .expect("Expecting this to work")
+    }
+}
+
+#[cfg(feature = "with_tools")]
+pub async fn configure_dataplane(
+    State(state): State<ContextForgeDataPlaneAppState>,
+    Json(global_config): Json<GlobalConfig>,
+) -> Response {
+    if crate::set_global_config(&state.config.redis_config, global_config).await.is_ok() {
         Response::builder()
             .status(StatusCode::ACCEPTED)
             .header(header::CONTENT_TYPE, "text/plain")

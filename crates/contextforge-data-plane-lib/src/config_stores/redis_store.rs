@@ -6,7 +6,7 @@ use redis::{
     aio::{ConnectionManager, ConnectionManagerConfig},
     cmd,
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
@@ -27,7 +27,7 @@ pub struct RedisStore<V> {
 
 impl<V> RedisStore<V>
 where
-    V: Clone + Serialize + DeserializeOwned,
+    V: Clone + Serialize + for<'a> Deserialize<'a>,
 {
     pub async fn new(redis_client: &RedisClient, cache_expiry: Duration) -> crate::Result<Self> {
         Ok(Self {

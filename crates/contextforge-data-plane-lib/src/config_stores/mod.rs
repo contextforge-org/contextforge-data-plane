@@ -11,6 +11,9 @@ use async_trait::async_trait;
 use lru_time_cache::LruCache;
 use serde::{Deserialize, Serialize};
 
+pub use global_config_store::get_global_config;
+#[cfg(feature = "with_tools")]
+pub use global_config_store::set_global_config;
 pub use redis_store::RedisStore;
 use tokio::sync::Mutex;
 
@@ -28,6 +31,8 @@ pub enum ConfigStoreError {
     DataEncoding,
     #[error("unable to write to store")]
     CantWriteData,
+    #[error("unable to create client")]
+    InvalidConfiguration(String),
 }
 
 #[derive(Clone)]

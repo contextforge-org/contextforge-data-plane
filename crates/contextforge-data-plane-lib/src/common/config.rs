@@ -4,6 +4,7 @@ use http::uri::Authority;
 
 use redis::{ConnectionAddr, IntoConnectionInfo, RedisError};
 use rustls_pki_types::{CertificateDer, PrivatePkcs8KeyDer, pem::PemObject};
+use url::Url;
 
 use std::{
     fs::{self, File},
@@ -13,14 +14,11 @@ use std::{
 };
 use thiserror::Error;
 
-use url::Url;
-
 use crate::{CliConfig, RedisClient};
 
 #[derive(Debug, Clone)]
 pub enum RedisConfig {
     PlainText { host: String, port: u16 },
-
     Tls { host: String, port: u16, trust_bundle: Vec<u8> },
     MTls { host: String, port: u16, trust_bundle: Vec<u8>, client_cert: Vec<u8>, client_key: Vec<u8> },
 }
