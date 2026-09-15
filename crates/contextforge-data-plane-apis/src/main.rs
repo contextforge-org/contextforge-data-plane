@@ -15,6 +15,6 @@ fn main() -> std::io::Result<()> {
     fs::write("./schemas/user.json", serde_json::to_string_pretty(&schema)?)?;
     let generator = SchemaGenerator::default();
     let schema = generator.into_root_schema_for::<GlobalConfig>();
-    fs::write("./schemas/user.json", serde_json::to_string_pretty(&schema)?)?;
+    fs::write("./schemas/global_config.json", serde_json::to_string_pretty(&schema)?)?;
     Ok(())
 }
