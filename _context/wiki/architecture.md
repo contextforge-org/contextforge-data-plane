@@ -67,8 +67,9 @@ into successful response hooks. See [Routing](routing.md) and
 
 | Module / crate | Owns |
 | --- | --- |
-| Binary `main.rs`, `logging.rs` | Startup wiring and telemetry providers. |
-| Library `common.rs` | CLI configuration, Redis/TLS validation, upstream HTTP client construction. |
+| Binary `main.rs` | Process startup and workspace-crate wiring. |
+| `contextforge-data-plane-observability` | Runtime observability configuration, logging and telemetry provider lifecycle, propagation, and shared instrumentation. |
+| Library `common/` | CLI configuration, derivation of component-owned runtime configuration, Redis/TLS validation, and upstream HTTP client construction. |
 | Library `authorization/` | JWKS verification and principal extraction. |
 | Library `layers/` | Request metadata, authentication/configuration boundaries, and validation. |
 | Library `gateway/` | MCP method handlers, explicit routing, per-request backend clients, progress forwarding. |

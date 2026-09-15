@@ -524,15 +524,13 @@ dependencies = [
  "contextforge-data-plane-apis",
  "contextforge-data-plane-cpex",
  "contextforge-data-plane-lib",
+ "contextforge-data-plane-observability",
  "cpex-payload-marker",
  "cpex-secrets-detection",
  "cpex-text-prefixer",
  "cpex-tool-namespace",
  "http",
  "jsonwebtoken",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "redis",
  "reqwest",
  "rmcp",
@@ -541,10 +539,7 @@ dependencies = [
  "serde_json",
  "tikv-jemallocator",
  "tokio",
- "tonic",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -592,6 +587,7 @@ dependencies = [
  "clap",
  "contextforge-data-plane-apis",
  "contextforge-data-plane-cpex",
+ "contextforge-data-plane-observability",
  "cpex",
  "futures",
  "http",
@@ -599,8 +595,6 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken",
  "lru_time_cache",
- "opentelemetry",
- "opentelemetry_sdk",
  "redis",
  "reqwest",
  "rmcp",
@@ -617,10 +611,24 @@ dependencies = [
  "tower",
  "tower-http 0.7.1",
  "tracing",
- "tracing-opentelemetry",
  "typed-builder",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "contextforge-data-plane-observability"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "tonic",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]

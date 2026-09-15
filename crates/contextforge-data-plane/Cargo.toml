@@ -14,6 +14,7 @@ default-run = "contextforge-data-plane"
 [dependencies]
 contextforge-data-plane-cpex.workspace = true
 contextforge-data-plane-lib = { path = "../contextforge-data-plane-lib"}
+contextforge-data-plane-observability.workspace = true
 # These demo plugins remain in their independently hosted legacy repository.
 cpex-payload-marker = { git = "https://github.com/contextforge-gateway-rs/cpex-plugins-rs", rev = "ab47801daccfbba44ea07b033034a347e7b5afdd", optional = true }
 cpex-text-prefixer = { git = "https://github.com/contextforge-gateway-rs/cpex-plugins-rs", rev = "ab47801daccfbba44ea07b033034a347e7b5afdd", optional = true }
@@ -21,13 +22,7 @@ cpex-tool-namespace = { git = "https://github.com/contextforge-gateway-rs/cpex-p
 cpex-secrets-detection = { workspace = true, optional = true }
 clap.workspace = true
 tracing.workspace = true
-tracing-opentelemetry.workspace = true
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "tracing-log"] }
 tokio.workspace = true
-opentelemetry.workspace = true
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "trace", "metrics", "internal-logs", "tls-aws-lc"] }
-opentelemetry_sdk.workspace = true
-tonic = { version = "0.14", default-features = false }
 rmcp.workspace = true
 tikv-jemallocator = "0.7.0"
 rustls.workspace = true

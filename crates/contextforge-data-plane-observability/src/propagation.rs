@@ -1,12 +1,12 @@
 //! W3C trace-context propagation glue.
 //!
-//! The OTLP exporter is configured in the binary crate; this module wires the
-//! two request seams so the gateway continues the caller's distributed trace
-//! and passes it on to backend MCP servers. All functions here are no-ops
-//! unless a global text-map propagator is installed (see the binary's
-//! `init_tracing_logging`), so they are safe to call when OTel is disabled.
+//! This module wires the two request seams so the gateway continues the
+//! caller's distributed trace and passes it on to backend MCP servers. All
+//! functions here are no-ops unless [`init_tracing_logging`](crate::init_tracing_logging)
+//! installs a global text-map propagator, so they are safe to call when
+//! OpenTelemetry is disabled.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::BuildHasher};
 
 use opentelemetry::global;
 use opentelemetry::propagation::{Extractor, Injector};
@@ -29,9 +29,9 @@ impl Extractor for HeaderExtractor<'_> {
 
 /// Writes the outbound backend header map for the text-map propagator (inject
 /// side). Malformed keys/values are dropped rather than propagated.
-struct HeaderInjector<'a>(&'a mut HashMap<http::HeaderName, http::HeaderValue>);
+struct HeaderInjector<'a, S>(&'a mut HashMap<http::HeaderName, http::HeaderValue, S>);
 
-impl Injector for HeaderInjector<'_> {
+impl<S: BuildHasher> Injector for HeaderInjector<'_, S> {
     fn set(&mut self, key: &str, value: String) {
         if let (Ok(name), Ok(value)) =
             (http::HeaderName::from_bytes(key.as_bytes()), http::HeaderValue::from_str(&value))
@@ -69,7 +69,7 @@ impl<B> MakeSpan<B> for ExtractingMakeSpan {
 /// Injects the current span's trace context into `headers` so the trace
 /// propagates to the backend MCP server. No-op when there is no valid active
 /// context (e.g. OTel disabled): the propagator writes nothing.
-pub fn inject_current_context(headers: &mut HashMap<http::HeaderName, http::HeaderValue>) {
+pub fn inject_current_context<S: BuildHasher>(headers: &mut HashMap<http::HeaderName, http::HeaderValue, S>) {
     let context = Span::current().context();
     global::get_text_map_propagator(|propagator| propagator.inject_context(&context, &mut HeaderInjector(headers)));
 }

@@ -1,5 +1,5 @@
 use clap::ValueEnum;
-
+use contextforge_data_plane_observability::{ObservabilityConfig, OtlpProtocol as ObservabilityOtlpProtocol};
 use http::uri::Authority;
 
 use redis::{ConnectionAddr, IntoConnectionInfo, RedisError};
@@ -90,60 +90,21 @@ pub enum OtlpProtocol {
     HttpProtobuf,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct ObservabilityConfig {
-    pub enable_open_telemetry: Option<bool>,
-
-    pub otlp_endpoint: Option<http::Uri>,
-
-    /// OTLP wire protocol. Use `http-protobuf` when exporting directly to
-    /// Langfuse (it does not accept gRPC).
-    pub otlp_protocol: Option<OtlpProtocol>,
-
-    /// Additional headers to attach to every OTLP request, formatted as
-    /// `key1=value1,key2=value2`. Used to pass authentication (for example
-    /// Langfuse's `Authorization=Basic <base64(public:secret)>`).
-    pub otlp_headers: Option<String>,
-
-    /// Overrides the `service.name` OpenTelemetry resource attribute.
-    /// Defaults to `CONTEXTFORGE-DATA-PLANE`.
-    pub otlp_service_name: Option<String>,
-
-    /// Enables OTLP export of HTTP server metrics (request counts, latency
-    /// histograms, in-flight gauge, body sizes) emitted by `axum-otel-metrics`.
-    /// Independent from `enable_open_telemetry` so traces and metrics can be
-    /// turned on individually. Langfuse does not ingest metrics, so this
-    /// typically targets an OpenTelemetry Collector.
-    pub enable_otel_metrics: Option<bool>,
-
-    /// OTLP metrics endpoint. For `grpc` defaults to `http://127.0.0.1:4317`;
-    /// for `http-protobuf` defaults to `http://127.0.0.1:4318/v1/metrics`.
-    /// Kept separate from `otlp_endpoint` so traces and metrics can be routed
-    /// to different backends (typical: traces to Langfuse, metrics to an
-    /// OTel Collector).
-    pub otlp_metrics_endpoint: Option<http::Uri>,
-}
-
 impl From<&CliConfig> for ObservabilityConfig {
     fn from(value: &CliConfig) -> Self {
-        let CliConfig {
-            enable_open_telemetry,
-            otlp_endpoint,
-            otlp_protocol,
-            otlp_headers,
-            otlp_service_name,
-            enable_otel_metrics,
-            otlp_metrics_endpoint,
-            ..
-        } = value.clone();
+        let defaults = ObservabilityConfig::default();
         Self {
-            enable_open_telemetry,
-            otlp_endpoint,
-            otlp_protocol,
-            otlp_headers,
-            otlp_service_name,
-            enable_otel_metrics,
-            otlp_metrics_endpoint,
+            traces_enabled: value.enable_open_telemetry == Some(true),
+            traces_endpoint: value.otlp_endpoint.clone(),
+            metrics_enabled: value.enable_otel_metrics == Some(true),
+            metrics_endpoint: value.otlp_metrics_endpoint.clone(),
+            protocol: match value.otlp_protocol.as_ref() {
+                None => defaults.protocol,
+                Some(OtlpProtocol::Grpc) => ObservabilityOtlpProtocol::Grpc,
+                Some(OtlpProtocol::HttpProtobuf) => ObservabilityOtlpProtocol::HttpProtobuf,
+            },
+            headers: value.otlp_headers.clone(),
+            service_name: value.otlp_service_name.clone().unwrap_or(defaults.service_name),
         }
     }
 }
@@ -383,7 +344,59 @@ mod tests {
     #[cfg(feature = "with_tools")]
     use std::{path::PathBuf, str::FromStr};
 
+    use clap::Parser;
+    use contextforge_data_plane_observability::{ObservabilityConfig, OtlpProtocol as ObservabilityOtlpProtocol};
+
+    use crate::CliConfig;
     use crate::common::config::{DownstreamTransportConfig, UpstreamTransportConfig};
+
+    #[test]
+    fn observability_config_is_derived_from_cli_config() {
+        let args = vec![
+            "contextforge-data-plane",
+            "--jwks-url",
+            "http://127.0.0.1:8080/",
+            "--redis-address",
+            "127.0.0.1",
+            "--redis-port",
+            "6379",
+            "--redis-mode",
+            "plain-text",
+            "--enable-open-telemetry",
+            "true",
+            "--otlp-endpoint",
+            "http://collector:4318/v1/traces",
+            "--enable-otel-metrics",
+            "true",
+            "--otlp-metrics-endpoint",
+            "http://collector:4318/v1/metrics",
+            "--otlp-protocol",
+            "http-protobuf",
+            "--otlp-headers",
+            "x-test=value",
+            "--otlp-service-name",
+            "test-service",
+        ];
+        #[cfg(feature = "with_tools")]
+        let args = args.into_iter().chain(["--token-verification-private-key", "./assets/jwt.key"]).collect::<Vec<_>>();
+
+        let cli_config = CliConfig::try_parse_from(args).expect("CLI configuration should parse");
+        let config = ObservabilityConfig::from(&cli_config);
+
+        assert!(config.traces_enabled);
+        assert_eq!(
+            config.traces_endpoint.as_ref().map(ToString::to_string).as_deref(),
+            Some("http://collector:4318/v1/traces")
+        );
+        assert!(config.metrics_enabled);
+        assert_eq!(
+            config.metrics_endpoint.as_ref().map(ToString::to_string).as_deref(),
+            Some("http://collector:4318/v1/metrics")
+        );
+        assert_eq!(config.protocol, ObservabilityOtlpProtocol::HttpProtobuf);
+        assert_eq!(config.headers.as_deref(), Some("x-test=value"));
+        assert_eq!(config.service_name, "test-service");
+    }
 
     impl Default for super::JwksConfig {
         fn default() -> Self {

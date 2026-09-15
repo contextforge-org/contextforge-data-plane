@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use contextforge_data_plane_lib::{ObservabilityConfig, OtlpProtocol};
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::{MetricExporter, Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig};
@@ -14,12 +13,13 @@ use tracing_subscriber::{
     util::SubscriberInitExt,
 };
 
+use crate::{ObservabilityConfig, OtlpProtocol, config::DEFAULT_SERVICE_NAME};
+
 #[allow(dead_code)]
 pub struct Guard {
     meter_provider: Option<SdkMeterProvider>,
 }
 
-const CONTROLLER_NAME: &str = "CONTEXTFORGE-DATA-PLANE";
 const DEFAULT_GRPC_TRACES_ENDPOINT: &str = "http://127.0.0.1:4317";
 const DEFAULT_GRPC_METRICS_ENDPOINT: &str = "http://127.0.0.1:4317";
 const DEFAULT_HTTP_TRACES_ENDPOINT: &str = "http://127.0.0.1:4318/v1/traces";
@@ -47,15 +47,13 @@ pub fn init_tracing_logging(
         .with_filter(filter::filter_fn(|meta| !meta.is_span()))
         .with_filter(console_filter);
 
-    if let Some(true) = configuration.enable_open_telemetry {
-        let protocol = configuration.otlp_protocol.clone().unwrap_or_default();
-        let service_name = configuration.otlp_service_name.clone().unwrap_or_else(|| CONTROLLER_NAME.to_owned());
-        let headers = parse_otlp_headers(configuration.otlp_headers.as_deref())?;
+    if configuration.traces_enabled {
+        let headers = parse_otlp_headers(configuration.headers.as_deref())?;
 
-        let exporter = match protocol {
+        let exporter = match configuration.protocol {
             OtlpProtocol::Grpc => {
                 let endpoint = configuration
-                    .otlp_endpoint
+                    .traces_endpoint
                     .as_ref()
                     .map_or_else(|| DEFAULT_GRPC_TRACES_ENDPOINT.to_owned(), ToString::to_string);
                 SpanExporter::builder()
@@ -67,7 +65,7 @@ pub fn init_tracing_logging(
             },
             OtlpProtocol::HttpProtobuf => {
                 let endpoint = configuration
-                    .otlp_endpoint
+                    .traces_endpoint
                     .as_ref()
                     .map_or_else(|| DEFAULT_HTTP_TRACES_ENDPOINT.to_owned(), ToString::to_string);
                 let mut builder = SpanExporter::builder()
@@ -88,7 +86,10 @@ pub fn init_tracing_logging(
             .with_sampler(Sampler::AlwaysOn)
             .with_resource(
                 opentelemetry_sdk::Resource::builder()
-                    .with_attributes(vec![opentelemetry::KeyValue::new("service.name", service_name.clone())])
+                    .with_attributes(vec![opentelemetry::KeyValue::new(
+                        "service.name",
+                        configuration.service_name.clone(),
+                    )])
                     .build(),
             )
             .build();
@@ -97,10 +98,10 @@ pub fn init_tracing_logging(
         // outbound requests carry it. Without this, inject/extract are no-ops.
         global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
-        let tracer = tracer_provider.tracer(CONTROLLER_NAME);
+        let tracer = tracer_provider.tracer(DEFAULT_SERVICE_NAME);
         let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-        let meter_provider = init_meter_provider(configuration, &service_name)?;
+        let meter_provider = init_meter_provider(configuration)?;
 
         registry.with(console_layer).with(telemetry.with_filter(tracing_filter)).init();
 
@@ -123,19 +124,17 @@ pub fn init_tracing_logging(
 /// to keep exporting.
 fn init_meter_provider(
     configuration: &ObservabilityConfig,
-    service_name: &str,
 ) -> Result<Option<SdkMeterProvider>, Box<dyn std::error::Error + Send + Sync>> {
-    if configuration.enable_otel_metrics != Some(true) {
+    if !configuration.metrics_enabled {
         return Ok(None);
     }
 
-    let protocol = configuration.otlp_protocol.clone().unwrap_or_default();
-    let headers = parse_otlp_headers(configuration.otlp_headers.as_deref())?;
+    let headers = parse_otlp_headers(configuration.headers.as_deref())?;
 
-    let exporter = match protocol {
+    let exporter = match configuration.protocol {
         OtlpProtocol::Grpc => {
             let endpoint = configuration
-                .otlp_metrics_endpoint
+                .metrics_endpoint
                 .as_ref()
                 .map_or_else(|| DEFAULT_GRPC_METRICS_ENDPOINT.to_owned(), ToString::to_string);
             MetricExporter::builder()
@@ -147,7 +146,7 @@ fn init_meter_provider(
         },
         OtlpProtocol::HttpProtobuf => {
             let endpoint = configuration
-                .otlp_metrics_endpoint
+                .metrics_endpoint
                 .as_ref()
                 .map_or_else(|| DEFAULT_HTTP_METRICS_ENDPOINT.to_owned(), ToString::to_string);
             let mut builder = MetricExporter::builder()
@@ -168,7 +167,7 @@ fn init_meter_provider(
         .with_reader(reader)
         .with_resource(
             opentelemetry_sdk::Resource::builder()
-                .with_attributes(vec![opentelemetry::KeyValue::new("service.name", service_name.to_owned())])
+                .with_attributes(vec![opentelemetry::KeyValue::new("service.name", configuration.service_name.clone())])
                 .build(),
         )
         .build();
