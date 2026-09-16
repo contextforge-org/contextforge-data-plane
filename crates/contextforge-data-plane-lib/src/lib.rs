@@ -4,7 +4,7 @@ use axum::{body::Body, middleware, response::Response, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
 use contextforge_data_plane_cpex::GatewayPluginRuntimeHandle;
 use futures::FutureExt;
-use http::{StatusCode, header, uri::Authority};
+use http::{StatusCode, header};
 
 use rmcp::transport::{
     StreamableHttpServerConfig,
@@ -44,7 +44,7 @@ use crate::{
     layers::{
         claims_id::claims_layer,
         mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
-        mcp_origin::mcp_origin_layer,
+        mcp_origin::mcp_origin_syntax_layer,
         user_config_store::user_config_store_layer,
         virtual_host_config::virtual_host_config_layer,
         virtual_host_id::virtual_host_id_layer,
@@ -112,16 +112,7 @@ impl Gateway {
         };
         let user_config_store = user_config_store as Arc<dyn UserConfigStore + Send + Sync>;
 
-        // RMCP owns Host validation. Keep its Origin validator disabled because
-        // mcp_origin_layer enforces exact origin tuples and returns 403 for every
-        // invalid present Origin, including when no allowlist is configured.
-        let streamable_config = if let Some(ref hosts) = config.mcp_allowed_hosts {
-            StreamableHttpServerConfig::default()
-                .with_allowed_hosts(hosts.iter().map(Authority::as_str))
-                .disable_allowed_origins()
-        } else {
-            StreamableHttpServerConfig::default().disable_allowed_hosts().disable_allowed_origins()
-        };
+        let streamable_config = streamable_http_server_config(&config);
         let reqwest_backend_client = reqwest::Client::try_from(&config)?;
 
         // Create streamable HTTP service
@@ -163,7 +154,7 @@ impl Gateway {
             .layer(middleware::from_fn(virtual_host_id_layer))
             .layer(middleware::from_fn_with_state(mcp_standard_header_limits, mcp_header_limits_layer))
             .layer(cors_layer)
-            .layer(middleware::from_fn_with_state(config.clone(), mcp_origin_layer));
+            .layer(middleware::from_fn(mcp_origin_syntax_layer));
 
         #[cfg(feature = "with_tools")]
         let app = tools::add_tools(app);
@@ -177,6 +168,22 @@ impl Gateway {
 
         Ok(app)
     }
+}
+
+fn streamable_http_server_config(config: &Config) -> StreamableHttpServerConfig {
+    let streamable_config = if let Some(ref hosts) = config.mcp_allowed_hosts {
+        StreamableHttpServerConfig::default().with_allowed_hosts(hosts.iter().map(http::uri::Authority::as_str))
+    } else {
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    };
+
+    // RMCP treats a portless allowlist entry as a wildcard. Both configured and
+    // inbound Origins use explicit effective ports so matching remains exact.
+    let allowed_origins = config.mcp_allowed_origins.iter().flatten().filter_map(|url| match url.origin() {
+        url::Origin::Tuple(scheme, host, port) => Some(format!("{scheme}://{host}:{port}")),
+        url::Origin::Opaque(_) => None,
+    });
+    streamable_config.with_allowed_origins(allowed_origins).enforce_origin_validation()
 }
 
 pub async fn get_config_store(config: &Config) -> Result<RedisUserConfigStore> {
@@ -203,9 +210,10 @@ mod tests {
     use http::{Request, StatusCode};
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use tower::ServiceExt;
+    use url::Url;
 
     use crate::{
-        Config, Gateway, UserConfigStoreType, get_authorization_service,
+        Config, Gateway, UserConfigStoreType, get_authorization_service, streamable_http_server_config,
         user_config_store::{ConfigStoreError, UserConfigStore},
     };
 
@@ -246,5 +254,20 @@ mod tests {
         let response = app.oneshot(request).await.expect("Expecting this to work");
 
         assert_eq!(response.status(), StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+    }
+
+    #[test]
+    fn rmcp_origin_allowlist_uses_explicit_effective_ports() {
+        let config = Config {
+            mcp_allowed_origins: Some(vec![
+                "https://app.example.com/path".parse::<Url>().unwrap(),
+                "http://localhost:8080".parse::<Url>().unwrap(),
+            ]),
+            ..Config::default()
+        };
+
+        let rmcp_config = streamable_http_server_config(&config);
+
+        assert_eq!(rmcp_config.allowed_origins, ["https://app.example.com:443", "http://localhost:8080"]);
     }
 }

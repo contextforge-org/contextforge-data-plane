@@ -153,8 +153,8 @@ impl Counter {
 #[tool_handler(meta = MetaObject(rmcp::object!({"tool_meta_key": "tool_meta_value"})))]
 #[prompt_handler(meta = MetaObject(rmcp::object!({"router_meta_key": "router_meta_value"})))]
 impl ServerHandler for Counter {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_completions()
                 .enable_prompts()

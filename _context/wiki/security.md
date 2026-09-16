@@ -66,9 +66,11 @@ on this single provider to avoid compiling a second crypto implementation.
 
 ## MCP Origin and Host Validation
 
-`mcp_origin_layer` validates Origin before authentication. RMCP validates Host
-at the MCP service boundary. Together they enforce MCP `2026-07-28`
-DNS-rebinding protection.
+`mcp_origin_syntax_layer` rejects non-serialized Origin values and normalizes
+valid values to explicit effective ports before authentication. RMCP validates
+the Origin allowlist and Host at the MCP service boundary to enforce MCP
+`2026-07-28` DNS-rebinding protection. The dataplane enables RMCP's strict
+Origin mode even when no allowlist is configured.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
@@ -77,15 +79,18 @@ DNS-rebinding protection.
 
 Missing Origin is accepted. `null`, malformed, unlisted, or
 path/query/fragment/userinfo-bearing origins are rejected with HTTP `403`.
-Default ports are normalized (`https://a` equals `https://a:443`). When the Host
+The dataplane passes each allowlisted Origin to RMCP with its effective port so
+matching remains exact; default ports are normalized (`https://a` equals
+`https://a:443`) and do not become arbitrary-port wildcards. When the Host
 allowlist is configured, RMCP returns `400` for a missing or malformed authority
 and `403` for an unlisted authority. There is no same-origin fallback; configure
 both allowlists for public deployments.
 
-Host validation runs only after the request reaches the RMCP service. Origin,
-CORS, authentication, user-config, and virtual-host middleware can return a
-response first, so the Host-specific `400` and `403` statuses apply only after
-those earlier stages succeed.
+Origin allowlist and Host validation run only after the request reaches the
+RMCP service. CORS, authentication, user-config, and virtual-host middleware can
+return a response first, so their RMCP-specific `400` and `403` statuses apply
+only after those earlier stages succeed. Invalid Origin syntax is still rejected
+before those stages.
 
 `mcp_header_limits_layer` enforces configurable count, per-value byte, and
 approximate request-level aggregate byte budgets for MCP standard request
