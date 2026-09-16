@@ -39,7 +39,7 @@ impl Config {
         self.mcp_standard_header_max_count =
             rhs.mcp_standard_header_max_count.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_COUNT);
         self.mcp_standard_header_max_total_bytes =
-            rhs.mcp_standard_header_max_total_bytes.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES);
+            rhs.mcp_standard_header_max_total_bytes.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_TOTAL_BYTES);
         self.mcp_standard_header_max_value_bytes =
             rhs.mcp_standard_header_max_value_bytes.unwrap_or(DEFAULT_MCP_STANDARD_HEADER_MAX_VALUE_BYTES);
 

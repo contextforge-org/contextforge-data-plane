@@ -16,11 +16,24 @@ use thiserror::Error;
 
 use crate::{CliConfig, RedisClient};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum RedisConfig {
     PlainText { host: String, port: u16 },
     Tls { host: String, port: u16, trust_bundle: Vec<u8> },
     MTls { host: String, port: u16, trust_bundle: Vec<u8>, client_cert: Vec<u8>, client_key: Vec<u8> },
+}
+impl std::fmt::Debug for RedisConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PlainText { host, port } => {
+                f.debug_struct("PlainText").field("host", host).field("port", port).finish()
+            },
+            Self::Tls { host, port, trust_bundle: _ } => {
+                f.debug_struct("Tls").field("host", host).field("port", port).finish()
+            },
+            Self::MTls { host, port, .. } => f.debug_struct("MTls").field("host", host).field("port", port).finish(),
+        }
+    }
 }
 
 impl TryFrom<RedisConfig> for RedisClient {
