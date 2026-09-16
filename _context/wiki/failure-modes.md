@@ -8,8 +8,7 @@ layers may return before the layer listed below is reached.
 
 | Failure | Response | Owner |
 | --- | --- | --- |
-| Present Origin is not a serialized tuple | `403` | `mcp_origin_syntax_layer`. |
-| Present serialized Origin is not allowed | `403` | RMCP strict Origin validation. |
+| Present Origin is invalid or not allowed | `403` | RMCP strict Origin validation. |
 | MCP standard-header count or byte budget exceeded | `431` | `mcp_header_limits_layer`. |
 | A request reaching virtual-host extraction does not match `/servers/{id}/mcp` | `400` | `virtual_host_id_layer`; unrelated router paths may instead be `404`. |
 | Missing Authorization or non-Bearer scheme | `401` | `claims_layer`. |

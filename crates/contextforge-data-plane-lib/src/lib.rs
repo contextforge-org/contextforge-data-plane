@@ -44,7 +44,6 @@ use crate::{
     layers::{
         claims_id::claims_layer,
         mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
-        mcp_origin::mcp_origin_syntax_layer,
         user_config_store::user_config_store_layer,
         virtual_host_config::virtual_host_config_layer,
         virtual_host_id::virtual_host_id_layer,
@@ -153,8 +152,7 @@ impl Gateway {
             .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), claims_layer))
             .layer(middleware::from_fn(virtual_host_id_layer))
             .layer(middleware::from_fn_with_state(mcp_standard_header_limits, mcp_header_limits_layer))
-            .layer(cors_layer)
-            .layer(middleware::from_fn(mcp_origin_syntax_layer));
+            .layer(cors_layer);
 
         #[cfg(feature = "with_tools")]
         let app = tools::add_tools(app);
@@ -177,12 +175,7 @@ fn streamable_http_server_config(config: &Config) -> StreamableHttpServerConfig 
         StreamableHttpServerConfig::default().disable_allowed_hosts()
     };
 
-    // RMCP treats a portless allowlist entry as a wildcard. Both configured and
-    // inbound Origins use explicit effective ports so matching remains exact.
-    let allowed_origins = config.mcp_allowed_origins.iter().flatten().filter_map(|url| match url.origin() {
-        url::Origin::Tuple(scheme, host, port) => Some(format!("{scheme}://{host}:{port}")),
-        url::Origin::Opaque(_) => None,
-    });
+    let allowed_origins = config.mcp_allowed_origins.iter().flatten().map(|url| url.origin().ascii_serialization());
     streamable_config.with_allowed_origins(allowed_origins).enforce_origin_validation()
 }
 
@@ -257,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn rmcp_origin_allowlist_uses_explicit_effective_ports() {
+    fn rmcp_origin_allowlist_uses_configured_origins() {
         let config = Config {
             mcp_allowed_origins: Some(vec![
                 "https://app.example.com/path".parse::<Url>().unwrap(),
@@ -268,6 +261,6 @@ mod tests {
 
         let rmcp_config = streamable_http_server_config(&config);
 
-        assert_eq!(rmcp_config.allowed_origins, ["https://app.example.com:443", "http://localhost:8080"]);
+        assert_eq!(rmcp_config.allowed_origins, ["https://app.example.com", "http://localhost:8080"]);
     }
 }

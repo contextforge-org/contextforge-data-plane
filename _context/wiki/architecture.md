@@ -12,7 +12,6 @@ TCP/TLS listener
   -> HttpMetricsLayer
   -> TraceLayer (extract incoming trace context)
   -> /contextforge-rs nested router
-  -> mcp_origin_syntax_layer    validates and normalizes Origin values (403)
   -> CORS layer
   -> mcp_header_limits_layer    bounds MCP headers (431)
   -> virtual_host_id_layer      inserts VirtualHostId from path (400)
@@ -24,10 +23,9 @@ TCP/TLS listener
        Origin/Host validation -> HTTP/MCP validation -> method dispatch
 ```
 
-Origin syntax and default-port normalization run before authentication. Origin
-allowlist matching and the optional Host allowlist are checked at the RMCP boundary, so earlier
-middleware may return first. MCP header budgets apply before JWT verification,
-configuration reads, and body parsing. See
+Origin and the optional Host allowlist are checked at the RMCP boundary, so
+earlier middleware may return first. MCP header budgets apply before JWT
+verification, configuration reads, and body parsing. See
 [Security](security.md#mcp-origin-and-host-validation).
 
 Health is registered in every build outside the MCP auth/config layers, while

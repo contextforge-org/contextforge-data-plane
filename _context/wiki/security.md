@@ -66,31 +66,26 @@ on this single provider to avoid compiling a second crypto implementation.
 
 ## MCP Origin and Host Validation
 
-`mcp_origin_syntax_layer` rejects non-serialized Origin values and normalizes
-valid values to explicit effective ports before authentication. RMCP validates
-the Origin allowlist and Host at the MCP service boundary to enforce MCP
+RMCP validates Origin and Host at the MCP service boundary to enforce MCP
 `2026-07-28` DNS-rebinding protection. The dataplane enables RMCP's strict
 Origin mode even when no allowlist is configured.
 
 | Environment variable | Default | Contract |
 | --- | --- | --- |
 | `CONTEXTFORGE_GATEWAY_RS_MCP_ALLOWED_HOSTS` | Host check disabled | When set, RMCP requires request authority from `Host` (URI fallback) to match. A portless entry matches any port; an explicit port matches exactly. |
-| `CONTEXTFORGE_GATEWAY_RS_MCP_ALLOWED_ORIGINS` | Only requests without `Origin` pass | A present Origin must be a strict serialized origin in the allowlist. |
+| `CONTEXTFORGE_GATEWAY_RS_MCP_ALLOWED_ORIGINS` | Only requests without `Origin` pass | A present Origin must match RMCP's configured Origin allowlist. |
 
-Missing Origin is accepted. `null`, malformed, unlisted, or
-path/query/fragment/userinfo-bearing origins are rejected with HTTP `403`.
-The dataplane passes each allowlisted Origin to RMCP with its effective port so
-matching remains exact; default ports are normalized (`https://a` equals
-`https://a:443`) and do not become arbitrary-port wildcards. When the Host
-allowlist is configured, RMCP returns `400` for a missing or malformed authority
-and `403` for an unlisted authority. There is no same-origin fallback; configure
-both allowlists for public deployments.
+Missing Origin is accepted. Non-UTF-8, malformed, or unlisted Origin values are
+rejected with HTTP `403`. RMCP treats a portless allowlist entry as matching any
+port; an explicit port matches exactly. When the Host allowlist is configured,
+RMCP returns `400` for a missing or malformed authority and `403` for an
+unlisted authority. There is no same-origin fallback; configure both allowlists
+for public deployments.
 
-Origin allowlist and Host validation run only after the request reaches the
-RMCP service. CORS, authentication, user-config, and virtual-host middleware can
-return a response first, so their RMCP-specific `400` and `403` statuses apply
-only after those earlier stages succeed. Invalid Origin syntax is still rejected
-before those stages.
+Origin and Host validation run only after the request reaches the RMCP service.
+CORS, authentication, user-config, and virtual-host middleware can return a
+response first, so their RMCP-specific `400` and `403` statuses apply only after
+those earlier stages succeed.
 
 `mcp_header_limits_layer` enforces configurable count, per-value byte, and
 approximate request-level aggregate byte budgets for MCP standard request
