@@ -1,5 +1,3 @@
-mod logging;
-
 #[cfg(feature = "test-plugins")]
 mod test_plugins;
 
@@ -11,6 +9,7 @@ use contextforge_data_plane_cpex::CpexRuntimeRegistry;
 use contextforge_data_plane_lib::{
     CliConfig, Config, ConfigStoreError, Gateway, RedisClient, UserConfigStoreType, get_authorization_service,
 };
+use contextforge_data_plane_observability::init_tracing_logging;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rustls::crypto;
 use tikv_jemallocator::Jemalloc;
@@ -27,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = CliConfig::try_parse()?;
     let config = Config::try_from(config)?;
 
-    let _guard = logging::init_tracing_logging(&config.observability_config)?;
+    let _guard = init_tracing_logging(&config.observability_config)?;
     info!("starting contextforge-data-plane {config:?}");
 
     let config = match contextforge_data_plane_lib::get_global_config(&config.redis_config).await {

@@ -19,7 +19,6 @@ mod errors;
 mod gateway;
 mod layers;
 mod mcp_standard_headers;
-mod telemetry;
 #[cfg(feature = "with_tools")]
 mod tools;
 mod transports;
@@ -167,7 +166,7 @@ impl Gateway {
         let app = app.with_state(mcp_gateway_state);
         let app = axum::Router::new()
             .nest("/contextforge-rs", app)
-            .layer(TraceLayer::new_for_http().make_span_with(telemetry::ExtractingMakeSpan))
+            .layer(TraceLayer::new_for_http().make_span_with(contextforge_data_plane_observability::ExtractingMakeSpan))
             .layer(HttpMetricsLayerBuilder::new().build());
 
         Ok(app)

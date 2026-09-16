@@ -54,7 +54,7 @@ pub(super) async fn connect_backend_for_request(
     }
 
     apply_header_config(&mut headers, backend, downstream_headers);
-    crate::telemetry::inject_current_context(&mut headers);
+    contextforge_data_plane_observability::inject_current_context(&mut headers);
 
     let config = StreamableHttpClientTransportConfig::with_uri(backend.url.to_string()).custom_headers(headers);
     let transport = StreamableHttpClientTransport::with_client(mcp_service.http_client.clone(), config);
