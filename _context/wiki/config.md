@@ -97,7 +97,7 @@ the HTTP transport.
 | Flag | Environment variable | Default | Purpose |
 | --- | --- | --- | --- |
 | `--enable-open-telemetry <bool>` | `CONTEXTFORGE_DATA_PLANE_ENABLE_OPEN_TELEMETRY` | `false` | Enables OTLP trace export. |
-| `--enable-otel-metrics <bool>` | `CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_METRICS` | `false` | Enables OTLP HTTP-server metric export when `--enable-open-telemetry true` is also set. |
+| `--enable-otel-metrics <bool>` | `CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_METRICS` | `false` | Enables OTLP HTTP-server metric export independently of trace export. |
 | `--otlp-protocol <protocol>` | `CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | `grpc` or `http-protobuf`. |
 | `--otlp-endpoint <uri>` | `CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_ENDPOINT` | Protocol-specific | Trace endpoint; defaults to `http://127.0.0.1:4317` for gRPC or `http://127.0.0.1:4318/v1/traces` for HTTP. |
 | `--otlp-metrics-endpoint <uri>` | `CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Protocol-specific | Metrics endpoint; defaults to `http://127.0.0.1:4317` for gRPC or `http://127.0.0.1:4318/v1/metrics` for HTTP. |
@@ -362,8 +362,8 @@ process/container log collector for persisted logs.
 HTTP request spans are emitted at `info`; `RUST_TRACE_LOG=info` includes them.
 `debug` is optional for additional instrumentation, not a requirement for
 export. `--enable-open-telemetry true` installs the trace provider and W3C
-propagator. In the current startup implementation, metrics initialization is
-inside that same branch: set **both** telemetry enable flags to export metrics.
+propagator. `--enable-otel-metrics true` installs the metrics provider
+independently; either signal can be exported without enabling the other.
 
 Metrics are pushed every **30 seconds**. The supplied Prometheus scrape interval
 is **15 seconds**; allow up to about 45–60 seconds after generating traffic.
@@ -377,7 +377,7 @@ is **15 seconds**; allow up to about 45–60 seconds after generating traffic.
 | Backend failures | Per-request connection/call diagnostics; no initialization fan-out exists. |
 | Plugin problems | CPEX initialization, pipeline, and reload logs. |
 | Missing traces | Enable flag, `RUST_TRACE_LOG`, exporter endpoint/protocol, and exporter error logs. |
-| Missing metrics | Both enable flags, metrics endpoint, 30-second export interval, then collector/Prometheus scrape status. |
+| Missing metrics | Metrics enable flag, metrics endpoint, 30-second export interval, then collector/Prometheus scrape status. |
 
 ## Local Telemetry Verification Stack
 
