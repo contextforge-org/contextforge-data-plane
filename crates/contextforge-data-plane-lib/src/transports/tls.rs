@@ -11,17 +11,17 @@ use tokio_rustls::TlsAcceptor;
 use tower::Service;
 use tracing::{error, info, warn};
 
-use crate::{Config, Error, transports::tcp::Tcp};
+use crate::{DownstreamTransportConfig, Error, transports::tcp::Tcp};
 
 pub struct DownstreamTls {
     tcp: Tcp,
     server_config: ServerConfig,
 }
 
-impl TryFrom<&Config> for Option<DownstreamTls> {
+impl TryFrom<&DownstreamTransportConfig> for Option<DownstreamTls> {
     type Error = Error;
 
-    fn try_from(config: &Config) -> Result<Self, Self::Error> {
+    fn try_from(config: &DownstreamTransportConfig) -> Result<Self, Self::Error> {
         match (config.tls_address, config.server_certificate.clone(), config.server_private_key.clone()) {
             (Some(address), Some(certificate), Some(private_key)) => {
                 let certificates = CertificateDer::pem_file_iter(&certificate)?.flatten().collect::<Vec<_>>();

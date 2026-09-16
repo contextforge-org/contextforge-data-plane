@@ -4,7 +4,7 @@ use contextforge_data_plane_apis::{
     User,
     user_store::{BackendMCPGateway, ServiceRoute, UserConfig, VirtualHost},
 };
-use contextforge_data_plane_lib::{Config, Result, UpstreamConnectionMode, UserConfigStore};
+use contextforge_data_plane_lib::{Config, ConfigStore, Result, UpstreamConnectionMode, UpstreamTransportConfig};
 use rmcp::transport::{
     StreamableHttpServerConfig, StreamableHttpService, streamable_http_server::session::local::LocalSessionManager,
 };
@@ -119,10 +119,12 @@ async fn start_counter_gateway_inner(
         .await?;
 
     let config = Config {
-        upstream_connection_mode: Some(UpstreamConnectionMode::PlainTextOrTls),
-        upstream_trust_bundle: matches!(transport, TestTransport::Tls).then(|| UPSTREAM_TRUST_BUNDLE.into()),
-        server_certificate: matches!(transport, TestTransport::Tls).then(|| SERVER_CERTIFICATE.into()),
-        server_private_key: matches!(transport, TestTransport::Tls).then(|| SERVER_PRIVATE_KEY.into()), // pragma: allowlist secret
+        upstream_transport_config: UpstreamTransportConfig {
+            upstream_connection_mode: Some(UpstreamConnectionMode::PlainTextOrTls),
+            upstream_trust_bundle: matches!(transport, TestTransport::Tls).then(|| UPSTREAM_TRUST_BUNDLE.into()),
+            upstream_certificate: matches!(transport, TestTransport::Tls).then(|| SERVER_CERTIFICATE.into()),
+            upstream_private_key: matches!(transport, TestTransport::Tls).then(|| SERVER_PRIVATE_KEY.into()), // pragma: allowlist secret
+        },
         ..create_default_config()
     };
 

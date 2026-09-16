@@ -90,20 +90,23 @@ fn load_ca_certificates(path: &Path) -> Result<Vec<reqwest::Certificate>, Author
 
 #[cfg(test)]
 mod test {
-    use crate::authorization::{
-        AuthorizationError,
-        jwks::{
-            JwtAuthorizationService,
-            jwks::{JWKS_CACHE_KEY, Jwks, VerificationKey},
-            jwks_authorization::{JWKS_CONNECT_TIMEOUT, JWKS_READ_TIMEOUT, JWKS_REQUEST_TIMEOUT},
-        },
-    };
     use crate::{
         Config,
         authorization::{AuthorizationClaims, Scopes},
         common::ContextForgeDataPlaneAppState,
+        config_stores::ConfigStoreError,
         layers::claims_id::claims_layer,
-        user_config_store::{ConfigStoreError, UserConfigStore},
+    };
+    use crate::{
+        authorization::{
+            AuthorizationError,
+            jwks::{
+                JwtAuthorizationService,
+                jwks::{JWKS_CACHE_KEY, Jwks, VerificationKey},
+                jwks_authorization::{JWKS_CONNECT_TIMEOUT, JWKS_READ_TIMEOUT, JWKS_REQUEST_TIMEOUT},
+            },
+        },
+        config_stores::ConfigStore,
     };
     use async_trait::async_trait;
     use axum::{Router, body::Body, middleware, response::Response, routing::get};
@@ -213,9 +216,10 @@ mod test {
         encode::<serde_json::Value>(&header, &claims, &key).expect("Expecting this to work")
     }
 
+    #[derive(Debug, Clone)]
     struct MockedUserConfigStore;
     #[async_trait]
-    impl UserConfigStore for MockedUserConfigStore {
+    impl ConfigStore<User, UserConfig> for MockedUserConfigStore {
         async fn get_config<'a>(&self, _: &'a User) -> Result<UserConfig, ConfigStoreError> {
             Err(ConfigStoreError::InvalidConnection)
         }

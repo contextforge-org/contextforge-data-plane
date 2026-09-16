@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::{body::Body, middleware, response::Response, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
+
 use contextforge_data_plane_cpex::GatewayPluginRuntimeHandle;
 use futures::FutureExt;
 use http::{StatusCode, header};
@@ -12,18 +13,17 @@ use rmcp::transport::{
 };
 mod authorization;
 mod common;
+mod config_stores;
 mod const_values;
 mod errors;
 mod gateway;
 mod layers;
 mod mcp_standard_headers;
 mod telemetry;
-mod transports;
-
 #[cfg(feature = "with_tools")]
 mod tools;
+mod transports;
 
-mod user_config_store;
 pub use common::{RedisClient, RedisConfig, UpstreamConnectionMode};
 use gateway::McpService;
 
@@ -31,8 +31,11 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use transports::{DownstreamTls, Tcp};
 use typed_builder::TypedBuilder;
-pub use user_config_store::RedisUserConfigStore;
-pub use user_config_store::{ConfigStoreError, UserConfigStore};
+
+pub use config_stores::{ConfigStore, ConfigStoreError, get_global_config};
+
+#[cfg(feature = "with_tools")]
+pub use config_stores::set_global_config;
 
 pub use crate::common::*;
 
@@ -41,6 +44,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 use crate::{
     authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor},
+    config_stores::RedisStore,
     layers::{
         claims_id::claims_layer,
         mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
@@ -54,7 +58,7 @@ pub use authorization::{AuthorizationClaims, AuthorizationService, get_authoriza
 #[derive(Clone)]
 pub enum UserConfigStoreType {
     Redis,
-    Test(Arc<dyn UserConfigStore + std::marker::Send + Sync>),
+    Test(Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + std::marker::Send + Sync>),
 }
 
 #[derive(Clone, TypedBuilder)]
@@ -75,7 +79,8 @@ impl Gateway {
 
         let mut handlers = vec![];
 
-        match (Option::<Tcp>::try_from(&config), Option::<DownstreamTls>::try_from(&config)) {
+        match (Option::<Tcp>::try_from(&config), Option::<DownstreamTls>::try_from(&config.downstream_transport_config))
+        {
             (Ok(Some(tcp)), Ok(Some(tls))) => {
                 handlers.push(tcp.handle_tcp(app.clone()).boxed());
                 handlers.push(tls.handle_tls(app.clone()).boxed());
@@ -109,10 +114,11 @@ impl Gateway {
             UserConfigStoreType::Redis => Arc::new(get_config_store(&config).await?),
             UserConfigStoreType::Test(store) => store,
         };
-        let user_config_store = user_config_store as Arc<dyn UserConfigStore + Send + Sync>;
+        let user_config_store = user_config_store
+            as Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + std::marker::Send + Sync>;
 
         let streamable_config = streamable_http_server_config(&config);
-        let reqwest_backend_client = reqwest::Client::try_from(&config)?;
+        let reqwest_backend_client = reqwest::Client::try_from(&config.upstream_transport_config)?;
 
         // Create streamable HTTP service
         let mcp_service: StreamableHttpService<McpService, LocalSessionManager> = StreamableHttpService::new(
@@ -179,10 +185,10 @@ fn streamable_http_server_config(config: &Config) -> StreamableHttpServerConfig 
     streamable_config.with_allowed_origins(allowed_origins).enforce_origin_validation()
 }
 
-pub async fn get_config_store(config: &Config) -> Result<RedisUserConfigStore> {
-    let redis_config = RedisConfig::try_from(config)?;
+pub async fn get_config_store(config: &Config) -> Result<RedisStore<UserConfig>> {
+    let redis_config = config.redis_config.clone();
     let cache_expiry = std::time::Duration::from_secs(config.user_config_cache_expiry_seconds);
-    RedisUserConfigStore::new(&RedisClient::try_from(redis_config)?, cache_expiry).await
+    RedisStore::new(&RedisClient::try_from(redis_config)?, cache_expiry).await
 }
 
 async fn health() -> Response {
@@ -206,15 +212,16 @@ mod tests {
     use url::Url;
 
     use crate::{
-        Config, Gateway, UserConfigStoreType, get_authorization_service, streamable_http_server_config,
-        user_config_store::{ConfigStoreError, UserConfigStore},
+        Config, Gateway, UserConfigStoreType,
+        config_stores::{ConfigStore, ConfigStoreError},
+        get_authorization_service, streamable_http_server_config,
     };
 
     #[derive(Clone)]
     struct UnusedConfigStore;
 
     #[async_trait]
-    impl UserConfigStore for UnusedConfigStore {
+    impl ConfigStore<User, UserConfig> for UnusedConfigStore {
         async fn get_config<'a>(&self, _key: &'a User) -> Result<UserConfig, ConfigStoreError> {
             unreachable!("mcp header limit rejection must run before config lookup")
         }
@@ -228,7 +235,7 @@ mod tests {
     async fn production_router_rejects_excessive_mcp_headers_before_auth() {
         let config = Config { mcp_standard_header_max_count: 1, ..Config::default() };
         let app = Gateway::builder()
-            .with_authorization_service(get_authorization_service(&config).expect("this should not fail"))
+            .with_authorization_service(get_authorization_service(&config.jwks_config).expect("this should not fail"))
             .with_config(config)
             .with_session_manager(Arc::new(LocalSessionManager::default()))
             .with_user_config_store_type(UserConfigStoreType::Test(Arc::new(UnusedConfigStore)))

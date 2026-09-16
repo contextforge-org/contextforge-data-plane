@@ -6,7 +6,7 @@ use http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
-use crate::Config;
+use crate::JwksConfig;
 
 mod jwks;
 mod principal_extractor;
@@ -16,10 +16,9 @@ pub use principal_extractor::{
 };
 
 pub fn get_authorization_service(
-    config: &Config,
+    config: &JwksConfig,
 ) -> Result<Arc<dyn AuthorizationService + Send + Sync>, AuthorizationError> {
-    let service =
-        jwks::JwtAuthorizationService::from_jwks_url(config.jwks_url.clone(), config.jwks_ca_cert_path.as_ref())?;
+    let service = jwks::JwtAuthorizationService::from_jwks_url(config.url.clone(), config.ca_cert_path.as_ref())?;
     Ok(Arc::new(service) as Arc<dyn AuthorizationService + Send + Sync>)
 }
 

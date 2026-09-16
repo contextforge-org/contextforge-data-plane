@@ -6,8 +6,8 @@ use tracing::{debug, info, warn};
 use crate::{
     authorization::AuthorizedPrincipal,
     common::ContextForgeDataPlaneAppState,
+    config_stores::ConfigStoreError,
     errors::{bad_request, internal_server_error},
-    user_config_store::ConfigStoreError,
 };
 
 pub async fn user_config_store_layer(
