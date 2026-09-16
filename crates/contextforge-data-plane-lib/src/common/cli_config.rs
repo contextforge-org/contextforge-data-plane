@@ -17,8 +17,9 @@ pub struct CliConfig {
     #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH")]
     pub jwks_ca_cert_path: Option<PathBuf>,
 
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OPEN_TELEMETRY")]
-    pub enable_open_telemetry: Option<bool>,
+    /// Enables OTLP trace export and W3C trace-context propagation.
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_TRACES")]
+    pub enable_otel_traces: Option<bool>,
 
     /// OTLP exporter endpoint. For `grpc` this is the collector address
     /// (e.g. `http://127.0.0.1:4317`). For `http-protobuf` this must be the
@@ -45,7 +46,7 @@ pub struct CliConfig {
 
     /// Enables OTLP export of HTTP server metrics (request counts, latency
     /// histograms, in-flight gauge, body sizes) emitted by `axum-otel-metrics`.
-    /// Independent from `enable_open_telemetry` so traces and metrics can be
+    /// Independent from `enable_otel_traces` so traces and metrics can be
     /// turned on individually. Langfuse does not ingest metrics, so this
     /// typically targets an OpenTelemetry Collector.
     #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_METRICS")]

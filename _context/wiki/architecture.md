@@ -68,7 +68,7 @@ into successful response hooks. See [Routing](routing.md) and
 | Module / crate | Owns |
 | --- | --- |
 | Binary `main.rs` | Process startup and workspace-crate wiring. |
-| `contextforge-data-plane-observability` | Runtime observability configuration, logging and telemetry provider lifecycle, propagation, and shared instrumentation. |
+| `contextforge-data-plane-observability` | Runtime observability configuration, logging, trace and metric provider lifecycle, propagation, and shared instrumentation. |
 | Library `common/` | CLI configuration, derivation of component-owned runtime configuration, Redis/TLS validation, and upstream HTTP client construction. |
 | Library `authorization/` | JWKS verification and principal extraction. |
 | Library `layers/` | Request metadata, authentication/configuration boundaries, and validation. |
@@ -150,7 +150,7 @@ requests can finish. Details are in [Plugin Config](config.md#plugin-config-redi
 Tokio main
   -> install Rustls crypto provider
   -> Config::parse()
-  -> initialize logging and optional telemetry providers
+  -> install logging and optional trace and metric providers
   -> optional CPEX registry and compiled factory registration
   -> construct JWKS authorization service
   -> build Gateway with Redis config store and RMCP session manager

@@ -9,7 +9,7 @@ use crate::{ObservabilityConfig, OtlpProtocol, config::DEFAULT_SERVICE_NAME, log
 const DEFAULT_GRPC_TRACES_ENDPOINT: &str = "http://127.0.0.1:4317";
 const DEFAULT_HTTP_TRACES_ENDPOINT: &str = "http://127.0.0.1:4318/v1/traces";
 
-pub(crate) fn init_tracer_provider(
+pub(crate) fn build_tracer_provider(
     configuration: &ObservabilityConfig,
 ) -> Result<Option<SdkTracerProvider>, Box<dyn std::error::Error + Send + Sync>> {
     if !configuration.traces_enabled {
@@ -59,11 +59,12 @@ pub(crate) fn init_tracer_provider(
         )
         .build();
 
-    // Install the W3C propagator so inbound `traceparent` is extracted and
-    // outbound requests carry it. Without this, inject/extract are no-ops.
-    global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
-
     Ok(Some(provider))
+}
+
+/// Installs W3C trace-context propagation after all fallible setup succeeds.
+pub(crate) fn install_propagator() {
+    global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 }
 
 pub(crate) fn layer<S>(provider: &SdkTracerProvider) -> impl Layer<S>

@@ -2,9 +2,9 @@
 //!
 //! This module wires the two request seams so the gateway continues the
 //! caller's distributed trace and passes it on to backend MCP servers. All
-//! functions here are no-ops unless [`init_tracing_logging`](crate::init_tracing_logging)
-//! installs a global text-map propagator, so they are safe to call when
-//! OpenTelemetry is disabled.
+//! functions here are no-ops unless [`ObservabilityRuntime::install`](crate::ObservabilityRuntime::install)
+//! installs a global text-map propagator, so they are safe to call when trace
+//! export is disabled.
 
 use std::{collections::HashMap, hash::BuildHasher};
 
@@ -60,7 +60,7 @@ impl<B> MakeSpan<B> for ExtractingMakeSpan {
         );
         let parent =
             global::get_text_map_propagator(|propagator| propagator.extract(&HeaderExtractor(request.headers())));
-        // Errors only when no OTel layer is registered (OTel disabled); ignore.
+        // Errors only when no OTel trace layer is registered; ignore.
         let _ = span.set_parent(parent);
         span
     }
@@ -68,7 +68,7 @@ impl<B> MakeSpan<B> for ExtractingMakeSpan {
 
 /// Injects the current span's trace context into `headers` so the trace
 /// propagates to the backend MCP server. No-op when there is no valid active
-/// context (e.g. OTel disabled): the propagator writes nothing.
+/// context (e.g. trace export disabled): the propagator writes nothing.
 pub fn inject_current_context<S: BuildHasher>(headers: &mut HashMap<http::HeaderName, http::HeaderValue, S>) {
     let context = Span::current().context();
     global::get_text_map_propagator(|propagator| propagator.inject_context(&context, &mut HeaderInjector(headers)));

@@ -94,7 +94,7 @@ impl From<&CliConfig> for ObservabilityConfig {
     fn from(value: &CliConfig) -> Self {
         let defaults = ObservabilityConfig::default();
         Self {
-            traces_enabled: value.enable_open_telemetry == Some(true),
+            traces_enabled: value.enable_otel_traces == Some(true),
             traces_endpoint: value.otlp_endpoint.clone(),
             metrics_enabled: value.enable_otel_metrics == Some(true),
             metrics_endpoint: value.otlp_metrics_endpoint.clone(),
@@ -362,7 +362,7 @@ mod tests {
             "6379",
             "--redis-mode",
             "plain-text",
-            "--enable-open-telemetry",
+            "--enable-otel-traces",
             "true",
             "--otlp-endpoint",
             "http://collector:4318/v1/traces",

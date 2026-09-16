@@ -10,4 +10,4 @@ mod traces;
 
 pub use config::{ObservabilityConfig, OtlpProtocol};
 pub use propagation::{ExtractingMakeSpan, inject_current_context};
-pub use runtime::{Guard, init_tracing_logging};
+pub use runtime::{ObservabilityRuntime, ObservabilityShutdownError};

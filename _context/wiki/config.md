@@ -96,7 +96,7 @@ the HTTP transport.
 
 | Flag | Environment variable | Default | Purpose |
 | --- | --- | --- | --- |
-| `--enable-open-telemetry <bool>` | `CONTEXTFORGE_DATA_PLANE_ENABLE_OPEN_TELEMETRY` | `false` | Enables OTLP trace export. |
+| `--enable-otel-traces <bool>` | `CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_TRACES` | `false` | Enables OTLP trace export and W3C trace-context propagation. |
 | `--enable-otel-metrics <bool>` | `CONTEXTFORGE_DATA_PLANE_ENABLE_OTEL_METRICS` | `false` | Enables OTLP HTTP-server metric export independently of trace export. |
 | `--otlp-protocol <protocol>` | `CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | `grpc` or `http-protobuf`. |
 | `--otlp-endpoint <uri>` | `CONTEXTFORGE_DATA_PLANE_OTEL_EXPORTER_OTLP_ENDPOINT` | Protocol-specific | Trace endpoint; defaults to `http://127.0.0.1:4317` for gRPC or `http://127.0.0.1:4318/v1/traces` for HTTP. |
@@ -361,7 +361,7 @@ process/container log collector for persisted logs.
 
 HTTP request spans are emitted at `info`; `RUST_TRACE_LOG=info` includes them.
 `debug` is optional for additional instrumentation, not a requirement for
-export. `--enable-open-telemetry true` installs the trace provider and W3C
+export. `--enable-otel-traces true` installs the trace provider and W3C
 propagator. `--enable-otel-metrics true` installs the metrics provider
 independently; either signal can be exported without enabling the other.
 
@@ -416,7 +416,7 @@ cargo run --release -p contextforge-data-plane --features with_tools,plugins \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true \
   --user-config-cache-expiry-seconds 0 \
-  --enable-open-telemetry true \
+  --enable-otel-traces true \
   --enable-otel-metrics true \
   --otlp-protocol http-protobuf \
   --otlp-endpoint http://127.0.0.1:4318/v1/traces \
