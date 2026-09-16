@@ -552,6 +552,7 @@ name = "contextforge-data-plane-apis"
 version = "0.1.0"
 dependencies = [
  "cpex",
+ "http",
  "rmcp",
  "schemars",
  "serde",

@@ -7,19 +7,19 @@ enum KeyType {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Hash, PartialEq, PartialOrd, Ord, Eq, JsonSchema)]
-pub struct User<'a> {
+pub struct User {
     name: KeyType,
-    key: &'a str,
+    key: String,
 }
 
-impl User<'_> {
+impl User {
     pub fn key(&self) -> &str {
-        self.key
+        self.key.as_str()
     }
 }
 
-impl<'a> User<'a> {
-    pub fn new(key: &'a str) -> Self {
-        Self { name: KeyType::UserConfig, key }
+impl User {
+    pub fn new(key: &str) -> Self {
+        Self { name: KeyType::UserConfig, key: key.to_owned() }
     }
 }

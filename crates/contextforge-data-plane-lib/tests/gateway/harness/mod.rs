@@ -24,7 +24,9 @@ pub(crate) use client::{
     modern_client_info,
 };
 pub(crate) use compatibility::connect_client_with_protocol;
-use contextforge_data_plane_lib::{Config, RedisConnectionMode};
+use contextforge_data_plane_lib::{
+    Config, DownstreamTransportConfig, JwksConfig, ObservabilityConfig, RedisConfig, UpstreamTransportConfig,
+};
 pub(crate) use gateway_fixture::{GatewayFixture, GatewayTestConfig};
 pub(crate) use plugin::{
     POST_DENY_ERROR_CODE, PRE_DENY_ERROR_CODE, PROMPT_ERROR_MESSAGE, PROMPT_POST_DENY_ERROR_CODE, PromptBehavior,
@@ -46,42 +48,24 @@ pub(crate) use user_config_store::MemoryUserConfigStore;
 pub fn create_default_config() -> Config {
     Config {
         address: None,
-        jwks_url: "http://127.0.0.1:8080/".parse().expect("should work"),
-        jwks_ca_cert_path: None,
-        enable_open_telemetry: None,
-        otlp_endpoint: None,
-        otlp_protocol: None,
-        otlp_headers: None,
-        otlp_service_name: None,
-        enable_otel_metrics: None,
-        otlp_metrics_endpoint: None,
+        jwks_config: JwksConfig { url: "http://127.0.0.1:8080/".parse().expect("should work"), ca_cert_path: None },
+
         mcp_standard_header_max_count: 10,
         mcp_standard_header_max_value_bytes: 4096,
         mcp_standard_header_max_total_bytes: 4096,
-        number_of_cpus: None,
-        single_runtime: None,
         runtime_plugins_enabled: None,
-        tls_address: None,
-        server_private_key: None,
-        server_certificate: None,
-        upstream_connection_mode: None,
-        upstream_private_key: None,
-        upstream_certificate: None,
-        upstream_trust_bundle: None,
+
         user_config_cache_expiry_seconds: 10,
-        redis_address: String::new(),
-        redis_port: 0,
-        redis_mode: RedisConnectionMode::PlainText,
-        redis_tls_trust_bundle: None,
-        redis_tls_client_private_key: None,
-        redis_tls_client_certificate: None,
-        log_name: None,
-        log_rotation: None,
+        redis_config: RedisConfig::PlainText { host: String::new(), port: 0 },
         mcp_allowed_origins: None,
         mcp_allowed_hosts: None,
         cel_principal_extractor_path: None,
 
         #[cfg(feature = "with_tools")]
         token_verification_private_key: PathBuf::from_str("./assets/jwt.key").expect("This should work"),
+
+        observability_config: ObservabilityConfig::default(),
+        downstream_transport_config: DownstreamTransportConfig::default(),
+        upstream_transport_config: UpstreamTransportConfig::default(),
     }
 }
