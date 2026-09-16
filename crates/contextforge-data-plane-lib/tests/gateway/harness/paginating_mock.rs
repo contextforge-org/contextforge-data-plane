@@ -1,7 +1,8 @@
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
-        Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+        Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerConfig,
+        Tool,
     },
     service::RequestContext,
 };
@@ -34,8 +35,8 @@ impl PaginatingServer {
 }
 
 impl ServerHandler for PaginatingServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::from_build_env())
             .with_protocol_version(ProtocolVersion::V_2026_07_28)
     }

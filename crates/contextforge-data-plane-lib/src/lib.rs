@@ -5,7 +5,7 @@ use axum_otel_metrics::HttpMetricsLayerBuilder;
 
 use contextforge_data_plane_cpex::GatewayPluginRuntimeHandle;
 use futures::FutureExt;
-use http::{StatusCode, header, uri::Authority};
+use http::{StatusCode, header};
 
 use rmcp::transport::{
     StreamableHttpServerConfig,
@@ -48,7 +48,6 @@ use crate::{
     layers::{
         claims_id::claims_layer,
         mcp_header_limits::{StandardHeaderLimits, mcp_header_limits_layer},
-        mcp_origin::mcp_origin_layer,
         user_config_store::user_config_store_layer,
         virtual_host_config::virtual_host_config_layer,
         virtual_host_id::virtual_host_id_layer,
@@ -118,16 +117,7 @@ impl Gateway {
         let user_config_store = user_config_store
             as Arc<dyn ConfigStore<contextforge_data_plane_apis::User, UserConfig> + std::marker::Send + Sync>;
 
-        // RMCP owns Host validation. Keep its Origin validator disabled because
-        // mcp_origin_layer enforces exact origin tuples and returns 403 for every
-        // invalid present Origin, including when no allowlist is configured.
-        let streamable_config = if let Some(ref hosts) = config.mcp_allowed_hosts {
-            StreamableHttpServerConfig::default()
-                .with_allowed_hosts(hosts.iter().map(Authority::as_str))
-                .disable_allowed_origins()
-        } else {
-            StreamableHttpServerConfig::default().disable_allowed_hosts().disable_allowed_origins()
-        };
+        let streamable_config = streamable_http_server_config(&config);
         let reqwest_backend_client = reqwest::Client::try_from(&config.upstream_transport_config)?;
 
         // Create streamable HTTP service
@@ -168,8 +158,7 @@ impl Gateway {
             .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), claims_layer))
             .layer(middleware::from_fn(virtual_host_id_layer))
             .layer(middleware::from_fn_with_state(mcp_standard_header_limits, mcp_header_limits_layer))
-            .layer(cors_layer)
-            .layer(middleware::from_fn_with_state(config.clone(), mcp_origin_layer));
+            .layer(cors_layer);
 
         #[cfg(feature = "with_tools")]
         let app = tools::add_tools(app);
@@ -183,6 +172,17 @@ impl Gateway {
 
         Ok(app)
     }
+}
+
+fn streamable_http_server_config(config: &Config) -> StreamableHttpServerConfig {
+    let streamable_config = if let Some(ref hosts) = config.mcp_allowed_hosts {
+        StreamableHttpServerConfig::default().with_allowed_hosts(hosts.iter().map(http::uri::Authority::as_str))
+    } else {
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    };
+
+    let allowed_origins = config.mcp_allowed_origins.iter().flatten().map(|url| url.origin().ascii_serialization());
+    streamable_config.with_allowed_origins(allowed_origins).enforce_origin_validation()
 }
 
 pub async fn get_config_store(config: &Config) -> Result<RedisStore<UserConfig>> {
@@ -209,11 +209,12 @@ mod tests {
     use http::{Request, StatusCode};
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use tower::ServiceExt;
+    use url::Url;
 
     use crate::{
         Config, Gateway, UserConfigStoreType,
         config_stores::{ConfigStore, ConfigStoreError},
-        get_authorization_service,
+        get_authorization_service, streamable_http_server_config,
     };
 
     #[derive(Clone)]
@@ -253,5 +254,20 @@ mod tests {
         let response = app.oneshot(request).await.expect("Expecting this to work");
 
         assert_eq!(response.status(), StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+    }
+
+    #[test]
+    fn rmcp_origin_allowlist_uses_configured_origins() {
+        let config = Config {
+            mcp_allowed_origins: Some(vec![
+                "https://app.example.com/path".parse::<Url>().unwrap(),
+                "http://localhost:8080".parse::<Url>().unwrap(),
+            ]),
+            ..Config::default()
+        };
+
+        let rmcp_config = streamable_http_server_config(&config);
+
+        assert_eq!(rmcp_config.allowed_origins, ["https://app.example.com", "http://localhost:8080"]);
     }
 }
