@@ -61,8 +61,8 @@ jobs:
         with:
           tool: cargo-binstall
 
-      - name: Install cf-integration 0.3.2 binary
-        run: cargo binstall cf-integration@0.3.2 --no-confirm
+      - name: Install cf-integration 0.4.0 binary
+        run: cargo binstall cf-integration@0.4.0 --no-confirm
 
       - name: Prepare the exact data-plane image
         env:

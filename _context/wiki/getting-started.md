@@ -270,7 +270,7 @@ Install the same released harness version used by CI. Conformance and Inspector
 install and run Node/npm only inside Docker images.
 
 ```bash
-cargo binstall cf-integration@0.3.2 --no-confirm
+cargo binstall cf-integration@0.4.0 --no-confirm
 make conformance
 ```
 
