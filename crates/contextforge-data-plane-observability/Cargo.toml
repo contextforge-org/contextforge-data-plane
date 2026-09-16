@@ -10,18 +10,21 @@ readme.workspace = true
 repository.workspace = true
 
 [dependencies]
+axum.workspace = true
 http.workspace = true
 opentelemetry.workspace = true
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "trace", "metrics", "internal-logs", "tls-aws-lc"] }
 opentelemetry_sdk.workspace = true
 tonic = { version = "0.14", default-features = false }
+tokio.workspace = true
 tower-http = { workspace = true, features = ["trace"] }
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "tracing-log"] }
+uuid.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+tower.workspace = true
 
 [lints]
 workspace = true

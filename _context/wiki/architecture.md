@@ -10,6 +10,7 @@ Tower layers execute outside-in:
 ```text
 TCP/TLS listener
   -> HttpMetricsLayer
+  -> request_context_layer      preserves/generates X-Correlation-ID
   -> TraceLayer (extract incoming trace context)
   -> /contextforge-rs nested router
   -> CORS layer
@@ -84,6 +85,7 @@ into successful response hooks. See [Routing](routing.md) and
 | State | Owner | Lifetime |
 | --- | --- | --- |
 | Parsed config and shared upstream HTTP client | Gateway | Process. |
+| Correlation ID | Request context and HTTP request extensions | One request; echoed downstream and propagated to the selected backend. |
 | JWKS keys | JWT authorization service | Five-minute cache; fetched when verification needs them. |
 | User config | Redis store and optional local LRU | Redis is authoritative; local capacity 50,000, default expiry 60 seconds. |
 | Principal, claims, virtual-host ID, config snapshot | HTTP request extensions | One request. |

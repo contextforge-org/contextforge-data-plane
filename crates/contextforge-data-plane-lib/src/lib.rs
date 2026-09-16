@@ -37,6 +37,9 @@ pub use config_stores::{ConfigStore, ConfigStoreError, get_global_config};
 pub use config_stores::set_global_config;
 
 pub use crate::common::*;
+pub use contextforge_data_plane_observability::{
+    CORRELATION_ID_HEADER, RequestObservabilityContext, current_request_context,
+};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -167,6 +170,7 @@ impl Gateway {
         let app = axum::Router::new()
             .nest("/contextforge-rs", app)
             .layer(TraceLayer::new_for_http().make_span_with(contextforge_data_plane_observability::ExtractingMakeSpan))
+            .layer(middleware::from_fn(contextforge_data_plane_observability::request_context_layer))
             .layer(HttpMetricsLayerBuilder::new().build());
 
         Ok(app)

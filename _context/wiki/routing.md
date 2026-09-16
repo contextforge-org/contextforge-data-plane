@@ -51,9 +51,9 @@ does not implement template listing or dynamic URI matching.
 
 ## Header forwarding
 
-Applied in order per upstream call: Host (from backend URL, HTTPS only) → passthrough (`BackendMCPGateway::passthrough_headers`) → `Mcp-Param-*` auto-forward → add (`add_headers`, overrides passthrough) → remove (`remove_headers`) → current trace-context injection.
+Applied in order per upstream call: Host (from backend URL, HTTPS only) → passthrough (`BackendMCPGateway::passthrough_headers`) → `Mcp-Param-*` auto-forward → add (`add_headers`, overrides passthrough) → remove (`remove_headers`) → current request-correlation and trace-context injection.
 
-Protected headers that config can never touch: `Host`, `Content-Length`, `Content-Type`, all RFC 7230 hop-by-hop headers, `Mcp-Session-Id`, `Accept`, `Last-Event-Id`, and all computed MCP standard headers (`Mcp-Method`, `Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Param-*`).
+Protected headers that config can never touch: `Host`, `X-Correlation-ID`, `Content-Length`, `Content-Type`, all RFC 7230 hop-by-hop headers, `Mcp-Session-Id`, `Accept`, `Last-Event-Id`, and all computed MCP standard headers (`Mcp-Method`, `Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Param-*`).
 
 For clients on `≥ 2026-07-28`, `call_tool` validates `Mcp-Param-*` headers against `BackendMCPGateway::tool_schemas` when a schema is published, before
 plugins or backend I/O. Without a schema the headers pass through without local

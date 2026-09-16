@@ -181,8 +181,8 @@ Integer values are limited to the IEEE 754 safe range.
 
 **Header apply order:** backend Host for HTTPS → configured passthrough →
 automatic `Mcp-Param-*` forwarding → `add_headers` → `remove_headers` → current
-trace-context injection. RMCP generates the outbound method, name, and protocol
-headers for the routed request.
+request-correlation and trace-context injection. RMCP generates the outbound
+method, name, and protocol headers for the routed request.
 
 Passthrough values come from the current HTTP request. A new backend transport
 is constructed per routed operation; no initialization-time header snapshot is
@@ -195,7 +195,7 @@ reused across requests.
 | Body-framing | `Content-Length`, `Content-Type` |
 | Hop-by-hop | `Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `Proxy-Connection`, `TE`, `Trailer`, `Trailers`, `Transfer-Encoding`, `Upgrade` |
 | RMCP-reserved | `Mcp-Session-Id`, `Accept`, `Last-Event-Id` |
-| Gateway-managed | `Host` (set from backend URL host + port; never overridden by config) |
+| Gateway-managed | `Host` (set from backend URL host + port) and `X-Correlation-ID` (preserved or generated per request); never overridden by config |
 | MCP standard | `Mcp-Method`, `Mcp-Name`, `Mcp-Protocol-Version`, `Mcp-Param-*` |
 
 `Authorization` and `Cookie` are not protected here because backend
@@ -448,9 +448,11 @@ scraping; the five-minute query window tolerates sparse samples.
 
 Incoming W3C trace context is extracted by `ExtractingMakeSpan` and current
 context is injected into each backend request after configured header changes.
-This propagation is implemented, not a future gap.
+`X-Correlation-ID` is preserved when valid or generated when absent, scoped to
+the request, returned on the response, and injected into the selected backend
+request. This propagation is implemented, not a future gap.
 
-HTTP spans carry method, URI, and version. Authentication, configuration,
+HTTP spans carry method, path, and version. Authentication, configuration,
 routed operations, and CPEX also have instrumentation. A complete MCP semantic
 attribute set and coverage of every operation are still separate work; do not
 interpret HTTP tracing alone as full MCP observability.
