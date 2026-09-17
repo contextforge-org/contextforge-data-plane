@@ -54,6 +54,7 @@ routes, and contributors evolve its routing, security, and protocol behavior.
 | `contextforge-data-plane-observability` | Runtime observability configuration, logging and telemetry provider lifecycle, propagation, and shared instrumentation. |
 | `contextforge-data-plane-apis` | Shared configuration shapes and JSON schema generation. |
 | `contextforge-data-plane-cpex` | Plugin registry, runtime, and MCP/CMF adapters. |
+| `contextforge-data-plane-benchmarks` | Deterministic in-process Gungraun regression benchmarks for CI. |
 
 User routing reads go through `UserConfigStore`. Runtime plugin configuration
 has its own store in the CPEX crate. Routing uses explicit `ServiceRoute`

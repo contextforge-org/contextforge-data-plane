@@ -97,8 +97,75 @@ jobs:
 
   bench:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GUNGRAUN_HOME: ${{ runner.temp }}/contextforge-gungraun
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
-      - run: cargo bench --locked --workspace --no-run
+      - name: Check for a benchmark baseline on the pull request base
+        id: comparison
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "${EVENT_NAME}" == "pull_request" ]] && git cat-file -e "${BASE_SHA}:benchmarks/Cargo.toml" 2>/dev/null; then
+            echo "has_base=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_base=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Check out pull request base
+        if: steps.comparison.outputs.has_base == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git checkout --detach "${BASE_SHA}"
+
+      - name: Set up base Gungraun runner and Valgrind
+        if: steps.comparison.outputs.has_base == 'true'
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1.1.3
+
+      - name: Record pull request base benchmark
+        if: steps.comparison.outputs.has_base == 'true'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --save-baseline=pr-base --save-summary=pretty-json --parallel=1
+
+      - name: Restore pull request head
+        if: steps.comparison.outputs.has_base == 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git checkout --detach "${HEAD_SHA}"
+
+      - name: Set up candidate Gungraun runner and Valgrind
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1.1.3
+
+      - name: Note initial benchmark baseline bootstrap
+        if: github.event_name == 'pull_request' && steps.comparison.outputs.has_base != 'true'
+        run: echo "::notice::The pull request base has no Gungraun harness; running the candidate without regression comparison."
+
+      - name: Compare candidate with pull request base
+        if: steps.comparison.outputs.has_base == 'true'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --baseline=pr-base --save-summary=pretty-json --parallel=1
+
+      - name: Run benchmark integrity check
+        if: steps.comparison.outputs.has_base != 'true'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --save-summary=pretty-json --parallel=1
+
+      - name: Upload Gungraun diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gungraun-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/contextforge-gungraun
+          if-no-files-found: ignore
+          retention-days: 14
