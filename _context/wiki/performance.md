@@ -19,11 +19,15 @@ Their fixed catalog contains one virtual host, four backends, 256 tool routes,
 teardown are excluded from measurement.
 
 CI runs each benchmark once under Callgrind with cache simulation disabled. A
-pull request is compared with its exact base revision and fails when executed
-instructions (`Ir`) increase by more than 5%. Gungraun instruction counts are
-for relative regression detection; they are not wall-clock latency or throughput
-claims. The initial harness change runs without comparison because its base has
-no benchmark target.
+successful `main` run uploads an immutable baseline named with its commit SHA.
+A pull request downloads the baseline for its exact base SHA and normally runs
+only the candidate. If the artifact is missing, expired, or was produced by a
+different compiler, runner, Valgrind, architecture, or C library environment,
+CI safely recomputes the exact base on the current runner before comparison.
+The job fails when executed instructions (`Ir`) increase by more than 5%.
+Gungraun instruction counts are for relative regression detection; they are not
+wall-clock latency or throughput claims. The initial harness change runs without
+comparison because its base has no benchmark target.
 
 Gungraun requires Linux, Valgrind, debug symbols, and a `gungraun-runner` version
 matching the `gungraun` dependency. CI installs these automatically. On Linux,
