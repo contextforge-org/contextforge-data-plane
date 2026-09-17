@@ -9,11 +9,14 @@ response handling through `Gateway::into_router` with fixed authorization and
 user configuration. It does not start Redis, backend servers, Docker, or the
 `cf-integration` harness.
 
-The four cases cover modern `server/discover`, early MCP standard-header limit
-rejection, an unknown tool route, and a routed tool rejected by parameter-header
-validation before backend I/O. Their fixed catalog contains one virtual host,
-four backends, 256 tool routes, 64 resource routes, 32 prompt routes, and 32
-resource-template routes. Setup and teardown are excluded from measurement.
+The six cases cover modern `server/discover`, early MCP standard-header limit
+rejection, an unknown tool route, a routed tool rejected by parameter-header
+validation, a valid routed tool call, and a published resource read. The final
+two use an unsupported backend URL scheme so they exercise header construction
+and upstream client setup, then fail deterministically before DNS or socket I/O.
+Their fixed catalog contains one virtual host, four backends, 256 tool routes,
+64 resource routes, 32 prompt routes, and 32 resource-template routes. Setup and
+teardown are excluded from measurement.
 
 CI runs each benchmark once under Callgrind with cache simulation disabled. A
 pull request is compared with its exact base revision and fails when executed

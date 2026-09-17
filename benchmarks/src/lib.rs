@@ -22,6 +22,7 @@ use tower::ServiceExt;
 const VIRTUAL_HOST_ID: &str = "11111111-1111-1111-1111-111111111111";
 const USER_ID: &str = "benchmark-user";
 const TARGET_TOOL: &str = "tool-255";
+const TARGET_RESOURCE: &str = "benchmark://resource-63";
 const RESPONSE_BODY_LIMIT: usize = 64 * 1024;
 
 const BACKEND_COUNT: usize = 4;
@@ -36,6 +37,8 @@ pub enum Scenario {
     ExcessiveStandardHeaders,
     UnknownTool,
     ParameterHeaderMismatch,
+    ToolBackendUnavailable,
+    ResourceBackendUnavailable,
 }
 
 pub struct BenchmarkRun {
@@ -172,7 +175,11 @@ fn benchmark_user_config() -> UserConfig {
             backend_name.clone(),
             BackendMCPGateway {
                 name: backend_name,
-                url: "http://127.0.0.1:9/mcp".parse().expect("benchmark backend URL should be valid"),
+                url: if index == (TOOL_COUNT - 1) % BACKEND_COUNT {
+                    "benchmark://backend/mcp".parse().expect("benchmark backend URL should be valid")
+                } else {
+                    "http://127.0.0.1:9/mcp".parse().expect("benchmark backend URL should be valid")
+                },
                 mcp_protocol_version: ProtocolVersion::V_2026_07_28,
                 passthrough_headers: Vec::new(),
                 add_headers: HashMap::new(),
@@ -225,14 +232,20 @@ fn request_for(scenario: Scenario) -> Request<Body> {
         Scenario::Discover => mcp_request("server/discover", "benchmark-client", &discover_body()),
         Scenario::ExcessiveStandardHeaders => excessive_standard_headers_request(),
         Scenario::UnknownTool => mcp_request("tools/call", "missing-tool", &tool_call_body("missing-tool")),
-        Scenario::ParameterHeaderMismatch => {
-            let mut request = mcp_request("tools/call", TARGET_TOOL, &tool_call_body(TARGET_TOOL));
-            request.headers_mut().insert("mcp-param-a", http::HeaderValue::from_static("1"));
-            request.headers_mut().insert("mcp-param-b", http::HeaderValue::from_static("2"));
-            request.headers_mut().insert("mcp-param-z", http::HeaderValue::from_static("different"));
-            request
+        Scenario::ParameterHeaderMismatch => parameter_header_request(http::HeaderValue::from_static("different")),
+        Scenario::ToolBackendUnavailable => parameter_header_request(http::HeaderValue::from_static("expected")),
+        Scenario::ResourceBackendUnavailable => {
+            mcp_request("resources/read", TARGET_RESOURCE, &resource_read_body(TARGET_RESOURCE))
         },
     }
+}
+
+fn parameter_header_request(final_header: http::HeaderValue) -> Request<Body> {
+    let mut request = mcp_request("tools/call", TARGET_TOOL, &tool_call_body(TARGET_TOOL));
+    request.headers_mut().insert("mcp-param-a", http::HeaderValue::from_static("1"));
+    request.headers_mut().insert("mcp-param-b", http::HeaderValue::from_static("2"));
+    request.headers_mut().insert("mcp-param-z", final_header);
+    request
 }
 
 fn mcp_request(method: &str, name: &str, body: &Value) -> Request<Body> {
@@ -277,6 +290,18 @@ fn tool_call_body(name: &str) -> Value {
         "params": {
             "name": name,
             "arguments": { "a": 1, "b": 2, "z": "expected" },
+            "_meta": request_metadata()
+        }
+    })
+}
+
+fn resource_read_body(uri: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "resources/read",
+        "params": {
+            "uri": uri,
             "_meta": request_metadata()
         }
     })
@@ -362,5 +387,35 @@ mod tests {
         );
         assert_eq!(response["error"]["code"], -32020);
         assert_eq!(response["error"]["message"], "Mcp-Param-Z header `different` does not match body value `expected`");
+    }
+
+    #[test]
+    fn valid_tool_call_reaches_backend_setup_without_network_io() {
+        let run = run(Scenario::ToolBackendUnavailable);
+        let response = response_json(&run);
+
+        assert_eq!(
+            run.response().status,
+            StatusCode::OK,
+            "unexpected response: {:?}",
+            String::from_utf8_lossy(&run.response().body)
+        );
+        assert_eq!(response["error"]["code"], -32603);
+        assert_eq!(response["error"]["message"], "Routing problem... backend unavailable");
+    }
+
+    #[test]
+    fn resource_read_reaches_backend_setup_without_network_io() {
+        let run = run(Scenario::ResourceBackendUnavailable);
+        let response = response_json(&run);
+
+        assert_eq!(
+            run.response().status,
+            StatusCode::OK,
+            "unexpected response: {:?}",
+            String::from_utf8_lossy(&run.response().body)
+        );
+        assert_eq!(response["error"]["code"], -32603);
+        assert_eq!(response["error"]["message"], "Routing problem... backend unavailable");
     }
 }

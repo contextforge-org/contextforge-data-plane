@@ -19,6 +19,14 @@ fn setup_parameter_header_mismatch() -> BenchmarkRun {
     setup(Scenario::ParameterHeaderMismatch)
 }
 
+fn setup_tool_backend_unavailable() -> BenchmarkRun {
+    setup(Scenario::ToolBackendUnavailable)
+}
+
+fn setup_resource_backend_unavailable() -> BenchmarkRun {
+    setup(Scenario::ResourceBackendUnavailable)
+}
+
 fn teardown(benchmark: BenchmarkRun) {
     drop(benchmark);
 }
@@ -43,9 +51,24 @@ fn parameter_header_mismatch(benchmark: BenchmarkRun) -> BenchmarkRun {
     black_box(execute(black_box(benchmark)))
 }
 
+#[library_benchmark(setup = setup_tool_backend_unavailable, teardown = teardown)]
+fn tool_backend_unavailable(benchmark: BenchmarkRun) -> BenchmarkRun {
+    black_box(execute(black_box(benchmark)))
+}
+
+#[library_benchmark(setup = setup_resource_backend_unavailable, teardown = teardown)]
+fn resource_backend_unavailable(benchmark: BenchmarkRun) -> BenchmarkRun {
+    black_box(execute(black_box(benchmark)))
+}
+
 library_benchmark_group!(
     name = request_path;
-    benchmarks = discover, excessive_standard_headers, unknown_tool, parameter_header_mismatch
+    benchmarks = discover,
+        excessive_standard_headers,
+        unknown_tool,
+        parameter_header_mismatch,
+        tool_backend_unavailable,
+        resource_backend_unavailable
 );
 
 main!(
