@@ -149,7 +149,7 @@ fn benchmark_config() -> Config {
         downstream_transport_config: DownstreamTransportConfig::default(),
         upstream_transport_config: UpstreamTransportConfig::default(),
         #[cfg(feature = "with_tools")]
-        token_verification_private_key: "assets/jwt.key".into(),
+        token_verification_private_key: "assets/jwt.key".into(), // pragma: allowlist secret
         cel_principal_extractor_path: None,
         mcp_allowed_origins: None,
         mcp_allowed_hosts: None,
