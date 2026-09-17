@@ -98,8 +98,6 @@ jobs:
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GUNGRAUN_HOME: ${{ runner.temp }}/contextforge-gungraun
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -132,6 +130,8 @@ jobs:
 
       - name: Record pull request base benchmark
         if: steps.comparison.outputs.has_base == 'true'
+        env:
+          GUNGRAUN_HOME: ${{ runner.temp }}/contextforge-gungraun
         run: >-
           cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
           --save-baseline=pr-base --save-summary=pretty-json --parallel=1
@@ -151,12 +151,16 @@ jobs:
 
       - name: Compare candidate with pull request base
         if: steps.comparison.outputs.has_base == 'true'
+        env:
+          GUNGRAUN_HOME: ${{ runner.temp }}/contextforge-gungraun
         run: >-
           cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
           --baseline=pr-base --save-summary=pretty-json --parallel=1
 
       - name: Run benchmark integrity check
         if: steps.comparison.outputs.has_base != 'true'
+        env:
+          GUNGRAUN_HOME: ${{ runner.temp }}/contextforge-gungraun
         run: >-
           cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
           --save-summary=pretty-json --parallel=1
