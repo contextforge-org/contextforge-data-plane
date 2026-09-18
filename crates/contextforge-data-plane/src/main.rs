@@ -9,7 +9,7 @@ use contextforge_data_plane_cpex::CpexRuntimeRegistry;
 use contextforge_data_plane_lib::{
     CliConfig, Config, ConfigStoreError, Gateway, RedisClient, UserConfigStoreType, get_authorization_service,
 };
-use contextforge_data_plane_observability::init_tracing_logging;
+use contextforge_data_plane_observability::ObservabilityRuntime;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rustls::crypto;
 use tikv_jemallocator::Jemalloc;
@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = CliConfig::try_parse()?;
     let config = Config::try_from(config)?;
 
-    let _guard = init_tracing_logging(&config.observability_config)?;
+    let observability = ObservabilityRuntime::install(&config.observability_config)?;
     info!("starting contextforge-data-plane {config:?}");
 
     let config = match contextforge_data_plane_lib::get_global_config(&config.redis_config).await {
@@ -56,7 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .build();
 
     let _cpex_watcher = initialize_cpex_runtime(plugin_registry).await?;
-    run_gateway(gateway).await
+    let gateway_result = run_gateway(gateway).await;
+    if let Err(shutdown_error) = observability.shutdown() {
+        error!("main - failed to shut down observability providers error = {shutdown_error}");
+    }
+    gateway_result
 }
 
 fn plugin_runtime_from_config(

@@ -20,6 +20,9 @@ tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "tracing-log"] }
 
+[dev-dependencies]
+tokio.workspace = true
+
 [lints]
 workspace = true
 

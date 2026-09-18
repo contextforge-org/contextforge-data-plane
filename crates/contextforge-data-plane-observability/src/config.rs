@@ -13,7 +13,7 @@ pub enum OtlpProtocol {
     HttpProtobuf,
 }
 
-/// Process-wide logging and OpenTelemetry provider configuration.
+/// Process-wide console logging, OTLP trace, and OTLP metric configuration.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ObservabilityConfig {
     pub traces_enabled: bool,
