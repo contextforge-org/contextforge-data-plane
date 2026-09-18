@@ -6,15 +6,31 @@ CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
 CF_DATAPLANE_REPO ?= $(CURDIR)
 CF_DATAPLANE_REF ?= $(shell git -C "$(CF_DATAPLANE_REPO)" rev-parse HEAD)
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
+GUNGRAUN_ARGS ?= --save-baseline=local --save-summary=pretty-json --parallel=1
 
 # IBM detect-secrets hardened fork — pinned to the same commit used in mcp-context-forge.
 DETECT_SECRETS_SPEC ?= git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976
 DETECT_SECRETS_EXCLUDE := '(?x)(Cargo\.lock$$|\.lock$$)|^\.secrets\.baseline$$'
 
-.PHONY: help docker-prod compose-up compose-down conformance conformance-bless docs-serve pre-commit secrets-scan-all configure-git
+.PHONY: help benchmark docker-prod compose-up compose-down conformance conformance-bless docs-serve pre-commit secrets-scan-all configure-git
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+benchmark: ## Run the deterministic request-path benchmarks (Linux only)
+	@if [ "$$(uname -s)" != "Linux" ]; then \
+		echo "Gungraun requires Valgrind on Linux; use the CI benchmark job from macOS."; \
+		exit 1; \
+	fi
+	@if ! command -v valgrind >/dev/null 2>&1; then \
+		echo "valgrind not found; install Valgrind before running the benchmarks."; \
+		exit 1; \
+	fi
+	@if ! command -v gungraun-runner >/dev/null 2>&1; then \
+		echo "gungraun-runner not found; install version 0.19.4 with cargo binstall or cargo install."; \
+		exit 1; \
+	fi
+	cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path -- $(GUNGRAUN_ARGS)
 
 docker-prod: ## Build production Docker image with plugins and without testing-only with_tools
 	docker build -t $(IMAGE_NAME) -f docker/Dockerfile .

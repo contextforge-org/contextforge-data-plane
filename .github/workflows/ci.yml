@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -97,8 +98,153 @@ jobs:
 
   bench:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2.9.1
-      - run: cargo bench --locked --workspace --no-run
+      - name: Configure clean Gungraun output directory
+        run: echo "GUNGRAUN_HOME=${RUNNER_TEMP}/contextforge-gungraun" >> "${GITHUB_ENV}"
+      - name: Check for a benchmark baseline on the pull request base
+        id: comparison
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "${EVENT_NAME}" == "pull_request" ]] && git cat-file -e "${BASE_SHA}:benchmarks/Cargo.toml" 2>/dev/null; then
+            echo "has_base=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has_base=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Set up candidate Gungraun runner and Valgrind
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1.1.3
+
+      - name: Record benchmark environment
+        shell: bash
+        run: |
+          {
+            rustc -Vv
+            gungraun-runner --version
+            valgrind --version
+            uname -sm
+            ldd --version 2>&1 | sed -n '1p'
+          } > "${RUNNER_TEMP}/gungraun-environment"
+
+      - name: Find exact main baseline artifact
+        id: baseline-artifact
+        if: steps.comparison.outputs.has_base == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_name="gungraun-main-${BASE_SHA}"
+          run_id="$(
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${artifact_name}&per_page=100" \
+              --jq ".artifacts | map(select(.expired == false and .workflow_run.head_sha == \"${BASE_SHA}\")) | sort_by(.created_at) | last | .workflow_run.id // empty"
+          )"
+          echo "run_id=${run_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download exact main baseline artifact
+        id: download-baseline
+        if: steps.baseline-artifact.outputs.run_id != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: gungraun-main-${{ github.event.pull_request.base.sha }}
+          path: ${{ runner.temp }}/contextforge-gungraun
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.baseline-artifact.outputs.run_id }}
+
+      - name: Validate reusable main baseline
+        id: reusable-baseline
+        if: steps.download-baseline.outcome == 'success'
+        shell: bash
+        run: |
+          if cmp -s "${RUNNER_TEMP}/gungraun-environment" "${GUNGRAUN_HOME}/environment"; then
+            echo "usable=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Using the saved Gungraun baseline for the exact pull request base commit."
+          else
+            echo "usable=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::The saved baseline environment differs from this runner; recomputing the base safely."
+          fi
+
+      - name: Prepare clean fallback baseline directory
+        if: steps.comparison.outputs.has_base == 'true' && steps.reusable-baseline.outputs.usable != 'true'
+        run: rm -rf "${GUNGRAUN_HOME:?}"
+
+      - name: Check out pull request base for fallback
+        if: steps.comparison.outputs.has_base == 'true' && steps.reusable-baseline.outputs.usable != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git checkout --detach "${BASE_SHA}"
+
+      - name: Set up base Gungraun runner and Valgrind for fallback
+        if: steps.comparison.outputs.has_base == 'true' && steps.reusable-baseline.outputs.usable != 'true'
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1.1.3
+
+      - name: Record pull request base benchmark for fallback
+        if: steps.comparison.outputs.has_base == 'true' && steps.reusable-baseline.outputs.usable != 'true'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --save-baseline=main --save-summary=pretty-json --parallel=1
+
+      - name: Restore pull request head
+        if: steps.comparison.outputs.has_base == 'true' && steps.reusable-baseline.outputs.usable != 'true'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git checkout --detach "${HEAD_SHA}"
+
+      - name: Restore candidate Gungraun runner after fallback
+        if: steps.comparison.outputs.has_base == 'true' && steps.reusable-baseline.outputs.usable != 'true'
+        uses: gungraun/setup-gungraun@62591572561bb2f4ed2ae300b8a8bea99ea8ddaf # v1.1.3
+
+      - name: Note initial benchmark baseline bootstrap
+        if: github.event_name == 'pull_request' && steps.comparison.outputs.has_base != 'true'
+        run: echo "::notice::The pull request base has no Gungraun harness; running the candidate without regression comparison."
+
+      - name: Compare candidate with pull request base
+        if: steps.comparison.outputs.has_base == 'true'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --baseline=main --save-summary=pretty-json --parallel=1
+
+      - name: Save main benchmark baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --save-baseline=main --save-summary=pretty-json --parallel=1
+
+      - name: Run bootstrap or manual benchmark integrity check
+        if: (github.event_name == 'pull_request' && steps.comparison.outputs.has_base != 'true') || github.event_name == 'workflow_dispatch'
+        run: >-
+          cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --
+          --save-summary=pretty-json --parallel=1
+
+      - name: Add environment fingerprint to main baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cp "${RUNNER_TEMP}/gungraun-environment" "${GUNGRAUN_HOME}/environment"
+
+      - name: Upload immutable main baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gungraun-main-${{ github.sha }}
+          path: ${{ runner.temp }}/contextforge-gungraun
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Gungraun diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: gungraun-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/contextforge-gungraun
+          if-no-files-found: ignore
+          retention-days: 14

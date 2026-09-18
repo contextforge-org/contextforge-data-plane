@@ -11,7 +11,8 @@ A change is not done until:
 6. If the change touches the hot path, update the matching wiki page in `_context/wiki/` in the same change.
 
 CI additionally runs `cargo shear --check-test-targets --deny-warnings --locked`
-and `cargo bench --no-run`.
+and the Gungraun request-path suite. Pull requests fail when a benchmark's
+Callgrind instruction count regresses by more than 5% from the pull request base.
 
 **By change type:**
 

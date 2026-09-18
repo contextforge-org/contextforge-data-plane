@@ -1,5 +1,48 @@
 # Performance and Load Testing
 
+## CI Instruction-Count Benchmarks
+
+The `contextforge-data-plane-benchmarks` workspace crate contains a small
+[Gungraun](https://gungraun.github.io/gungraun/latest/html/index.html) suite for
+deterministic regression checks. It measures complete in-process request and
+response handling through `Gateway::into_router` with fixed authorization and
+user configuration. It does not start Redis, backend servers, Docker, or the
+`cf-integration` harness.
+
+The six cases cover modern `server/discover`, early MCP standard-header limit
+rejection, an unknown tool route, a routed tool rejected by parameter-header
+validation, a valid routed tool call, and a published resource read. The final
+two use an unsupported backend URL scheme so they exercise header construction
+and upstream client setup, then fail deterministically before DNS or socket I/O.
+Their fixed catalog contains one virtual host, four backends, 256 tool routes,
+64 resource routes, 32 prompt routes, and 32 resource-template routes. Setup and
+teardown are excluded from measurement.
+
+CI runs each benchmark once under Callgrind with cache simulation disabled. A
+successful `main` run uploads an immutable baseline named with its commit SHA.
+A pull request downloads the baseline for its exact base SHA and normally runs
+only the candidate. If the artifact is missing, expired, or was produced by a
+different compiler, runner, Valgrind, architecture, or C library environment,
+CI safely recomputes the exact base on the current runner before comparison.
+The job fails when executed instructions (`Ir`) increase by more than 5%.
+Gungraun instruction counts are for relative regression detection; they are not
+wall-clock latency or throughput claims. The initial harness change runs without
+comparison because its base has no benchmark target.
+
+Gungraun requires Linux, Valgrind, debug symbols, and a `gungraun-runner` version
+matching the `gungraun` dependency. CI installs these automatically. On Linux,
+install Valgrind and `gungraun-runner` 0.19.4, then run:
+
+```bash
+make benchmark
+```
+
+The default local baseline is named `local`; override `GUNGRAUN_ARGS` to select
+another baseline or filter. macOS cannot run Valgrind natively, so use the CI
+job there. Keep new CI cases deterministic, service-free, and small. Use the
+load harness below for full backend round trips and before/after throughput or
+latency measurements.
+
 Load testing is owned by [`cf-integration`](https://crates.io/crates/cf-integration).
 The commands below match **0.5.0**, the version pinned by this repository's
 conformance workflow. The old `scripts/cf-integration.sh` wrapper is no longer

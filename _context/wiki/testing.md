@@ -17,9 +17,19 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo nextest run --locked --workspace --all-features
 cargo deny check advisories bans licenses
 cargo build --locked -p contextforge-data-plane --features plugins
-cargo bench --no-run
+cargo bench --locked -p contextforge-data-plane-benchmarks --bench request_path --no-run
 cargo shear --check-test-targets --deny-warnings --locked
 ```
+
+The CI benchmark job runs the Gungraun request-path suite, not only a compile
+check. Successful `main` runs publish a commit-addressed baseline; pull requests
+reuse the artifact for their exact base SHA and run only the candidate when the
+recorded environment matches. A missing, expired, or incompatible artifact
+falls back to benchmarking the exact base on the same runner. Comparisons fail
+when a case exceeds its 5% Callgrind instruction-count limit. Manual runs execute
+the suite once as an integrity check. See
+[Performance](performance.md#ci-instruction-count-benchmarks) for the measured
+paths, prerequisites, and local command.
 
 Use `cargo test` when nextest is unavailable. For wiki changes, also run `mdbook build _context/wiki` and `mdbook test _context/wiki`.
 
