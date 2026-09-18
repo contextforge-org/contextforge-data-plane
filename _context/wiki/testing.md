@@ -88,15 +88,13 @@ owns the official fixture, control-plane registration, Compose topology, server
 and client runners, result rendering, and transactional baseline handling. This
 repository keeps only the CI invocation, Make targets, and expected findings.
 
-Comment exactly `/conformance` on a pull request to run the **Conformance**
-Actions workflow. Only repository owners, members, and collaborators can start
-it. The workflow sets a pending `conformance` commit status, tests the pull request
-head commit, and updates that status with the result. The `issue_comment`
-workflow itself is read from the default branch, so a PR edit to that workflow
-does not change the command handling until merged. CI builds and names the
-conformance binary artifact using that same head SHA and retains it for 90 days,
-so changes to `main` do not invalidate the artifact. It runs the modern client
-and modern server eras through the external dataplane in standalone mode. This
+The **Conformance** Actions workflow runs automatically for every pull request
+revision and reports its result as a native pull request check. It checks out
+the pull request head commit while CI builds and names the conformance binary
+artifact using that same head SHA. The harness waits for that artifact when the
+workflows start concurrently, and CI retains it for 90 days, so changes to
+`main` do not invalidate the artifact. Conformance runs the modern client and
+modern server eras through the external dataplane in standalone mode. This
 starts Redis, the dataplane, nginx, and the official fixture without the control
 plane. The harness discovers the fixture's tools, resources, templates, and
 prompts and publishes their routes and actual tool schemas directly to Redis

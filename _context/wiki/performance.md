@@ -1,7 +1,7 @@
 # Performance and Load Testing
 
 Load testing is owned by [`cf-integration`](https://crates.io/crates/cf-integration).
-The commands below match **0.3.2**, the version pinned by this repository's
+The commands below match **0.5.0**, the version pinned by this repository's
 conformance workflow. The old `scripts/cf-integration.sh` wrapper is no longer
 in this repository.
 
@@ -11,8 +11,8 @@ Use Docker with enough resources for the selected topology. Install the pinned
 CLI and check its command reference:
 
 ```bash
-cargo binstall cf-integration@0.3.2 --no-confirm
-cf-integration load --help
+cargo binstall cf-integration@0.5.0 --no-confirm
+cf-integration load run --help
 ```
 
 The standalone lane starts the external dataplane, Redis, nginx, and a fixture
@@ -22,7 +22,7 @@ does not depend on the unsupported external `tools/list` method:
 ```bash
 CF_INTEGRATION_DIR="$PWD/.integration" \
 CF_DATAPLANE_REPO="$PWD" CF_DATAPLANE_REF="$(git rev-parse HEAD)" \
-  cf-integration load --lane external --protocol-version modern --standalone \
+  cf-integration load run --lane external --client-era modern --standalone \
   --users 1 --spawn-rate 1 --run-time 10s
 ```
 
@@ -34,7 +34,7 @@ comparing them. All external examples target modern MCP `2026-07-28`.
 ```bash
 CF_INTEGRATION_DIR="$PWD/.integration" \
 CF_DATAPLANE_REPO="$PWD" CF_DATAPLANE_REF="$(git rev-parse HEAD)" \
-  cf-integration load --lane external --protocol-version modern --standalone \
+  cf-integration load run --lane external --client-era modern --standalone \
   --users 20 --spawn-rate 5 --run-time 2m
 ```
 
@@ -60,9 +60,9 @@ versions alongside the report.
 Omit `--standalone` to include the control plane and its publication path:
 
 ```bash
-cf-integration load --lane external --protocol-version modern \
+cf-integration load run --lane external --client-era modern \
   --users 20 --spawn-rate 5 --run-time 2m
-cf-integration load --lane builtin --protocol-version modern \
+cf-integration load run --lane builtin --client-era modern \
   --users 20 --spawn-rate 5 --run-time 2m
 ```
 
@@ -70,7 +70,7 @@ Use equivalent backends, tools, hardware, authentication, policy, cache settings
 and client metadata for comparisons. A full-stack failure while discovering or
 publishing the catalog is a setup failure, not a throughput measurement.
 Standalone measurements omit control-plane publication and must be labeled as
-such. See the [pinned harness documentation](https://github.com/contextforge-org/contextforge-dev-tools/blob/v0.3.2/README.md)
+such. See the [pinned harness documentation](https://github.com/contextforge-org/contextforge-dev-tools/blob/v0.5.0/README.md)
 for topology and source selection.
 
 ## Benchmark Controls

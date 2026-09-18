@@ -127,6 +127,10 @@ findings:
   check: sep-2575-server-declares-prompts-in-discover
   name: ServerDeclaresPromptsInDiscover
   status: FAILURE
+- scenario: tools-call-with-progress
+  check: tools-call-with-progress
+  name: ToolsCallWithProgress
+  status: FAILURE
 - scenario: tools-list
   check: tools-list
   name: ToolsList
