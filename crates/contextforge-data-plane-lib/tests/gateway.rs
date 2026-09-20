@@ -17,3 +17,6 @@ mod resources;
 mod subscriptions;
 #[path = "gateway/tools.rs"]
 mod tools;
+
+#[path = "gateway/downstream_auth.rs"]
+mod downstream_auth;

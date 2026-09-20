@@ -12,24 +12,39 @@ mod jwks;
 mod principal_extractor;
 
 pub use principal_extractor::{
-    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, PrincipalExtractor,
+    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, Permission, PrincipalConfig,
+    PrincipalExtractor, ScopeMapping, UserClaim,
 };
 
 pub fn get_authorization_service(
     config: &JwksConfig,
 ) -> Result<Arc<dyn AuthorizationService + Send + Sync>, AuthorizationError> {
-    let service = jwks::JwtAuthorizationService::from_jwks_url(config.url.clone(), config.ca_cert_path.as_ref())?;
+    let service = jwks::JwtAuthorizationService::new(config)?;
     Ok(Arc::new(service) as Arc<dyn AuthorizationService + Send + Sync>)
 }
 
 #[async_trait]
 pub trait AuthorizationService: std::fmt::Debug {
-    async fn authorize(&self, authorization_token: &HeaderValue) -> Option<AuthorizationClaims>;
+    async fn authorize(&self, authorization_token: &HeaderValue) -> Result<AuthorizationClaims, AuthenticationError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AuthenticationError {
+    #[error("invalid bearer token")]
+    InvalidToken,
+    #[error("verification keys unavailable")]
+    KeysUnavailable,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
 pub enum AuthorizationError {
+    #[error(
+        "JWT trust configuration requires a nonempty issuer, audiences, and RSA/EC algorithms; leeway must be at most 300 seconds"
+    )]
+    InvalidTrustConfiguration,
+    #[error("JWKS contains duplicate signing key IDs")]
+    DuplicateKeyId,
     #[error("SaaS JWKS contains no supported signing keys")]
     NoSupportedKeys,
     #[error("SaaS JWKS is invalid")]
@@ -37,7 +52,7 @@ pub enum AuthorizationError {
     #[error("SaaS JWKS is invalid")]
     InvalidKey(#[source] jsonwebtoken::errors::Error),
 
-    #[error("MCPOPS_JWKS_URL must use HTTPS (HTTP is allowed only for loopback testing)")]
+    #[error("JWKS URL must use HTTPS (HTTP is allowed only for loopback testing), without credentials or fragments")]
     InsecureJwksUrl,
     #[error("unable to retrieve SaaS JWKS")]
     JwksRequest(#[source] reqwest::Error),
@@ -80,10 +95,22 @@ pub struct Idp {
     iss: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TypedBuilder)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationClaims {
     value: serde_json::Value,
+}
+
+impl AuthorizationClaims {
+    pub fn as_value(&self) -> &serde_json::Value {
+        &self.value
+    }
+}
+
+impl std::fmt::Debug for AuthorizationClaims {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthorizationClaims").finish_non_exhaustive()
+    }
 }
 
 impl From<serde_json::Value> for AuthorizationClaims {

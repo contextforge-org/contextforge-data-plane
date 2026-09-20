@@ -12,8 +12,10 @@ layers may return before the layer listed below is reached.
 | MCP standard-header count or byte budget exceeded | `431` | `mcp_header_limits_layer`. |
 | A request reaching virtual-host extraction does not match `/servers/{id}/mcp` | `400` | `virtual_host_id_layer`; unrelated router paths may instead be `404`. |
 | Missing Authorization or non-Bearer scheme | `401` | `claims_layer`. |
-| Bad JWT, unsupported algorithm, no matching JWKS key, fetch failure, or invalid time claim | `401` `Invalid token` | `claims_layer`. |
-| Missing/non-string mapped user or tenant | `401` `Invalid token. Unable to extract the principal from claims` | `PrincipalExtractorLayer`. |
+| Bad JWT, unsupported algorithm, unmatched key, wrong issuer/audience, missing exp, or invalid time claim | `401` `Invalid bearer token` | `claims_layer`; Bearer challenge included. |
+| JWKS fetch/unusable document and no usable cached key | `503` | `claims_layer`; expired keys are never used. |
+| Valid identity without MCPUser permission | `403` | `require_permission`, before configuration lookup. |
+| Missing/empty/non-string user or tenant, conflicting tenant aliases, or malformed permission claims | `401` `Invalid token. Unable to extract the principal from claims` | `PrincipalExtractorLayer`. |
 | Missing user configuration | `400` | `user_config_store_layer`, keyed by extracted user ID. |
 | Config cannot be decoded / key cannot be encoded | `500` | Config store / `user_config_store_layer`. |
 | Virtual host absent from caller's config | `404` `{"detail":"Server not found"}` | `virtual_host_config_layer`. |

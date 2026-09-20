@@ -17,6 +17,34 @@ pub struct CliConfig {
     #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH")]
     pub jwks_ca_cert_path: Option<PathBuf>,
 
+    /// Exact trusted token issuer; never discovered from the incoming token.
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_ISSUER")]
+    pub jwt_issuer: String,
+
+    /// Accepted audiences (comma-separated); at least one must match.
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES", value_delimiter = ',', required = true)]
+    pub jwt_audiences: Vec<String>,
+
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_ALGORITHMS", value_delimiter = ',', default_value = "RS256")]
+    pub jwt_algorithms: Vec<jsonwebtoken::Algorithm>,
+
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_LEEWAY_SECONDS", default_value_t = 30)]
+    pub jwt_leeway_seconds: u64,
+
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_USER_CLAIM", value_enum, default_value = "sub")]
+    pub jwt_user_claim: crate::authorization::UserClaim,
+
+    /// When either scope mapping is set, scopes restrict role-derived permissions.
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_ADMIN_SCOPES", value_delimiter = ',')]
+    pub jwt_admin_scopes: Option<Vec<String>>,
+
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_MCP_USER_SCOPES", value_delimiter = ',')]
+    pub jwt_mcp_user_scopes: Option<Vec<String>>,
+
+    /// Explicitly authorize using configured scope mappings instead of roles.
+    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_SCOPES_ONLY", default_value_t = false)]
+    pub jwt_scopes_only: bool,
+
     #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OPEN_TELEMETRY")]
     pub enable_open_telemetry: Option<bool>,
 

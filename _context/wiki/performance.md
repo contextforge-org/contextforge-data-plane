@@ -85,3 +85,34 @@ standalone snapshot that is not being republished during the run.
 Record request rate, latency percentiles, failures, and resource usage after
 warmup. Do not infer correctness or protocol coverage from successful load;
 run [workspace and conformance checks](testing.md) separately.
+
+## Cached Authentication Probe (issue #753)
+
+The first downstream-authentication slice includes an explicitly invoked probe:
+
+```bash
+cargo +1.96 test --locked -p contextforge-data-plane-lib --all-features \
+  --test gateway cached_authentication_load -- --ignored --nocapture
+```
+
+This is an in-process router measurement in the debug profile: 100 warmup
+requests, then 8,000 signed-RSA `server/discover` requests at concurrency 16
+on four Tokio workers. It uses a loopback JWKS server and an in-memory config
+store, without Redis, plugins, or a routed backend. It is not a production or
+Watson integration load test. `--all-features` here is for testing only.
+
+On 2026-09-20, three alternating runs compared main `9836fdc` with the first
+implementation on `user/pratik-gandhi/downstream-authentication`, using the same
+probe and claims (including both equivalent tenant aliases):
+
+| Measurement (median of three runs) | Baseline | Auth implementation |
+| --- | ---: | ---: |
+| Requests/second | 11,179 | 10,585 |
+| Per-run p95 latency | 1,866 µs | 2,280 µs |
+| JWKS fetches per run | 1 | 1 |
+| Failed requests | 0 | 0 |
+
+The additional checks cost about 5.3% throughput in this short debug probe;
+latency tails varied across runs. Repeat in release mode and with the real
+Watson deployment before drawing capacity conclusions. Use separate Cargo target
+directories for the two worktrees to avoid replacing each other's crate artifacts.

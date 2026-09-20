@@ -52,7 +52,11 @@ use crate::{
         virtual_host_id::virtual_host_id_layer,
     },
 };
-pub use authorization::{AuthorizationClaims, AuthorizationService, get_authorization_service};
+pub use authorization::{
+    AuthenticationError, AuthorizationClaims, AuthorizationService, AuthorizedPrincipal, Permission, PrincipalConfig,
+    ScopeMapping, UserClaim, get_authorization_service,
+};
+pub use layers::permission::require_permission;
 
 #[derive(Clone)]
 pub enum UserConfigStoreType {
@@ -109,6 +113,7 @@ impl Gateway {
     /// callers bind listeners before starting the service.
     pub async fn into_router(self) -> Result<axum::Router> {
         let Gateway { config, session_manager, user_config_store_type, plugin_runtime, authorization_service } = self;
+        config.principal_config.validate()?;
         let user_config_store = match user_config_store_type {
             UserConfigStoreType::Redis => Arc::new(get_config_store(&config).await?),
             UserConfigStoreType::Test(store) => store,
@@ -143,14 +148,18 @@ impl Gateway {
         let app = axum::Router::new()
             .nest_service("/servers/{virtual_host_name}/mcp", mcp_service)
             .layer(middleware::from_fn(virtual_host_config_layer))
-            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer));
+            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer))
+            .layer(middleware::from_fn_with_state(Permission::MCPUser, require_permission));
 
         let app = if let Some(cel_principal_extractor_path) = config.cel_principal_extractor_path.as_ref() {
-            app.layer(layers::PrincipalExtractorLayer::new(CelPrincipalExtractor::from_file(
-                cel_principal_extractor_path,
-            )?))
+            app.layer(layers::PrincipalExtractorLayer::new(
+                CelPrincipalExtractor::from_file(cel_principal_extractor_path)?
+                    .with_config(config.principal_config.clone()),
+            ))
         } else {
-            app.layer(layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor {}))
+            app.layer(layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor::new(
+                config.principal_config.clone(),
+            )))
         };
 
         let app = app

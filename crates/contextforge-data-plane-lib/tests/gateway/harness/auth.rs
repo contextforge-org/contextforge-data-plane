@@ -19,6 +19,7 @@ fn default_claims(user_id: &str) -> serde_json::Value {
         "iss": "mcpgateway",
         "sub": user_id,
         "tenant_id": "test_tenant",
+        "role": "user",
         "aud": "mcpgateway-api",
         "exp": now + TEST_TOKEN_TTL_SECS,
         "iat": now,
@@ -60,7 +61,10 @@ impl AlwaysAllowAuthorizatioService {
 
 #[async_trait]
 impl AuthorizationService for AlwaysAllowAuthorizatioService {
-    async fn authorize(&self, _: &HeaderValue) -> Option<AuthorizationClaims> {
-        Some(AuthorizationClaims::from(default_claims(&self.user)))
+    async fn authorize(
+        &self,
+        _: &HeaderValue,
+    ) -> Result<AuthorizationClaims, contextforge_data_plane_lib::AuthenticationError> {
+        Ok(AuthorizationClaims::from(default_claims(&self.user)))
     }
 }

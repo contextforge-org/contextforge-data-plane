@@ -15,8 +15,9 @@ TCP/TLS listener
   -> CORS layer
   -> mcp_header_limits_layer    bounds MCP headers (431)
   -> virtual_host_id_layer      inserts VirtualHostId from path (400)
-  -> claims_layer               verifies JWT, inserts AuthorizationClaims (401)
+  -> claims_layer               verifies JWT, inserts AuthorizationClaims (401; JWKS unavailable 503)
   -> PrincipalExtractorLayer   inserts AuthorizedPrincipal (401)
+  -> require_permission         requires MCPUser (403), before any config lookup
   -> user_config_store_layer    loads UserConfig (400 missing, 500 decode/error)
   -> virtual_host_config_layer checks caller's virtual host (404)
   -> /servers/{virtual_host_name}/mcp RMCP service
@@ -38,7 +39,7 @@ consume typed extensions; they do not parse Redis keys.
 
 ```text
 modern MCP request
-  -> header, JWT, and principal checks
+  -> header, JWT, principal, and MCPUser permission checks
   -> user config and virtual-host check
   -> published object/backend route
   -> recognized tool parameter-header validation
@@ -84,7 +85,7 @@ into successful response hooks. See [Routing](routing.md) and
 | State | Owner | Lifetime |
 | --- | --- | --- |
 | Parsed config and shared upstream HTTP client | Gateway | Process. |
-| JWKS keys | JWT authorization service | Five-minute cache; fetched when verification needs them. |
+| JWKS keys | JWT authorization service | Five-minute cache; serialized refresh, five-second cooldown; no expired-key fallback. |
 | User config | Redis store and optional local LRU | Redis is authoritative; local capacity 50,000, default expiry 60 seconds. |
 | Principal, claims, virtual-host ID, config snapshot | HTTP request extensions | One request. |
 | Backend RMCP service | Routed operation | One request; explicitly closed after the call. |

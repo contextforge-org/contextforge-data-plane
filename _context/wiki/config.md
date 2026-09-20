@@ -3,7 +3,7 @@
 ## Minimum Required Flags
 
 ```text
---redis-address   --redis-port   --redis-mode   --jwks-url
+--redis-address   --redis-port   --redis-mode   --jwks-url   --jwt-issuer   --jwt-audiences
 ```
 
 Plus at least one listener: `--address` or `--tls-address`. Development builds
@@ -33,6 +33,14 @@ Origin and Host settings retain the explicitly configured
 | `--server-private-key <path>` | `CONTEXTFORGE_DATA_PLANE_TLS_SERVER_PRIVATE_KEY` | With `--tls-address` | PEM private key for downstream TLS. |
 | `--jwks-url <url>` | `CONTEXTFORGE_DATA_PLANE_JWKS_URL` | Required | Fetches RSA/EC JWT verification keys. HTTPS required except for loopback HTTP testing. |
 | `--jwks-ca-cert-path <path>` | `CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH` | Optional | PEM CA bundle trusted by the JWKS HTTP client. |
+| `--jwt-issuer <issuer>` | `CONTEXTFORGE_DATA_PLANE_JWT_ISSUER` | Required | Exact trusted issuer. |
+| `--jwt-audiences <aud,...>` | `CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES` | Required | At least one token audience must match. |
+| `--jwt-algorithms <alg,...>` | `CONTEXTFORGE_DATA_PLANE_JWT_ALGORITHMS` | `RS256` | Explicit RSA/EC allowlist; HMAC is rejected at startup. |
+| `--jwt-leeway-seconds <n>` | `CONTEXTFORGE_DATA_PLANE_JWT_LEEWAY_SECONDS` | `30` | Time tolerance, maximum 300 seconds. |
+| `--jwt-user-claim <claim>` | `CONTEXTFORGE_DATA_PLANE_JWT_USER_CLAIM` | `sub` | `sub` or explicit `wo-user-id` profile. |
+| `--jwt-admin-scopes <scope,...>` | `CONTEXTFORGE_DATA_PLANE_JWT_ADMIN_SCOPES` | None | Scope names granting Admin and MCPUser. Setting either mapping makes scopes restrict roles. |
+| `--jwt-mcp-user-scopes <scope,...>` | `CONTEXTFORGE_DATA_PLANE_JWT_MCP_USER_SCOPES` | None | Scope names granting MCPUser only. |
+| `--jwt-scopes-only` | `CONTEXTFORGE_DATA_PLANE_JWT_SCOPES_ONLY` | `false` | Explicit scope-only authorization; requires a scope mapping. |
 | `--token-verification-private-key <path>` | None (CLI only) | Required when built with `with_tools` | Signs local test tokens and supplies the public key served by the local JWKS helper. |
 | `--cel-principal-extractor-path <path>` | None (CLI only) | Optional | CEL principal mapping for custom claim layouts; otherwise uses the default user/tenant claim mapping below. |
 
@@ -108,31 +116,65 @@ the HTTP transport.
 
 ## JWT Claims (validated by `claims_layer`)
 
-The JWT signature is checked against the configured JWKS. The default principal
-extractor then requires user and tenant IDs at the top level of the claims:
+JWT trust settings come from deployment configuration, never from token headers
+or claims. The verifier requires an allowed signature algorithm and a nonempty
+`kid` that matches a configured JWKS signing key, including its declared algorithm.
 
-| Claim | Current behavior |
+| Claim | Behavior |
 | --- | --- |
-| `sub`, `user_id`, `UserId` | First present alias must be a string; supplies the user ID used for Redis config lookup. |
-| `tenantId`, `tenant_id` | First present alias must be a string; supplies the principal's tenant ID. |
-| `exp` | Checked when present; the local helper sets a one-hour expiry. |
-| `nbf` | Checked when present; rejects tokens that are not yet valid, subject to verifier leeway. |
-| `iss`, `aud` | No fixed issuer or audience is currently enforced by the JWKS verifier. |
+| `iss` | Required; exact configured issuer. Preserved in the request identity. |
+| `aud` | Required string or string array; must include a configured audience. |
+| `exp` | Required and validated, with configured clock leeway. |
+| `nbf` | Validated when present; malformed or future values are rejected. |
+| `sub` | Default required nonempty string user ID. No implicit fallback. |
+| `woUserId` | Used instead of `sub` only with `--jwt-user-claim wo-user-id`. |
+| `woTenantId`, `tenant_id`, `tenantId` | At least one nonempty string required. All present aliases must agree. |
+| `role`, `roles` | String and string list respectively. `admin` grants Admin and MCPUser; `builder`/`user` grant MCPUser. Unknown or missing roles grant nothing. |
+| `scope`, `permissions` | Space-separated string and string list respectively. Combined into normalized scopes; no scope grants access without explicit configuration. |
 
-The default extractor does not infer the tenant from `teams`, email, or a nested
-`user` object. Use `--cel-principal-extractor-path` for a custom mapping.
-An earlier alias with a non-string value prevents fallback to a later alias.
-The tenant ID is required by extraction but is not currently included in the
-user-config Redis/cache key. JWT scopes and RBAC are not enforced here; object
-visibility comes from the published routing maps.
+Every MCP request requires MCPUser before configuration lookup. Missing/invalid
+identity returns 401; valid identity without permission returns 403. A reusable
+Admin guard is available for future management APIs; this branch adds no such APIs.
 
-The local `GET /contextforge-rs/admin/tokens/{tenant_id}/{user_id}` helper sets
-`tenant_id` and `sub` from the path. Its raw JWT response belongs in the
-`Authorization: Bearer ...` header; it is not a JSON token object.
+By default roles decide permissions. Setting either scope mapping intersects
+role permissions with scope permissions; absent/empty/unmapped scopes then deny.
+For example, with `--jwt-mcp-user-scopes aipg.mcp`, even an admin needs that
+scope to use MCP, and cannot gain Admin from it. `--jwt-scopes-only` explicitly
+switches to scope-based grants, including for tokens without roles. Empty scope
+names in configuration are invalid. Malformed role/scope claim types return 401.
+These role defaults and scope names need confirmation with the Watson token owner
+before real integration.
 
-There is no per-token revocation. Verification keys are cached for five minutes;
-removing a key from JWKS is not immediate invalidation of cached keys. Restart
-the dataplane after removing a key if that cache must be cleared immediately.
+For custom or nested claims, `--cel-principal-extractor-path` takes a trusted CEL
+expression returning `user_id`, `tenant_id`, and optional `role`, `roles`, `scope`,
+and `permissions`. The input variable is `claims`. Example:
+
+```cel
+{"user_id": claims.woUserId, "tenant_id": claims.woTenantId, "roles": claims.user.roles}
+```
+
+The same permission policy applies to CEL results. It cannot override the issuer,
+which always comes from the verified token. There is no implicit default tenant.
+User IDs need not be emails. The issuer and tenant are carried in the request
+identity, but **persistent/cache keys still contain only the user ID**. This
+change does not establish isolation between tenants sharing a subject. A coordinated
+publisher/key migration and CPEX policy integration remain separate work.
+
+The development token helper sets the configured issuer/audiences, path-derived
+`sub`, `woUserId`, `tenant_id`, and `role: user`. It uses RS256 and key ID `test`.
+Its token is a raw string for `Authorization: Bearer ...`. Custom scope profiles
+need matching claims through the POST helper. All `with_tools` routes remain
+unauthenticated, testing-only helpers; production builds must exclude them.
+
+Keys are cached for five minutes. One fetch runs at a time and refresh attempts
+are separated by at least five seconds, including after failure. Unknown key IDs
+can trigger a refresh after that cooldown; rotation may take up to the cooldown
+plus fetch time to be observed. Known unexpired keys remain usable during a JWKS
+outage; expired keys never authenticate. Fetches have a ten-second total timeout,
+a 1 MiB response limit, and no redirects. Unavailable or unusable JWKS returns 503
+when no usable cached key is available; invalid tokens return 401. No per-token
+revocation lookup exists. Removing a signing key is effective after refresh or
+cache expiry; restart to clear the cache immediately if necessary.
 
 ## UserConfig Shape (from `contextforge-data-plane-apis`)
 
@@ -306,6 +348,7 @@ cargo run -p contextforge-data-plane \
   --redis-port 6379 \
   --redis-mode plain-text \
   --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
+  --jwt-issuer local-dev --jwt-audiences local-gateway \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true
@@ -328,7 +371,8 @@ cargo nextest run --locked -p contextforge-data-plane-lib --test gateway -E 'tes
 | mTLS upstream without certificate/key | Upstream HTTP client construction. |
 | Invalid JWKS URL scheme or non-loopback plain HTTP URL | Authorization-service construction. |
 | Missing/invalid plugin document when enabled | CPEX initialization, before serving requests. |
-| Unreachable JWKS endpoint | Token verification when keys must be fetched. |
+| Missing/empty JWT issuer/audience, non-RSA/EC algorithm, or excessive leeway | Authorization-service construction. |
+| Unreachable JWKS endpoint | 503 during token verification when keys must be fetched. |
 | Unreachable backend or HTTP URL with default HTTPS-only mode | When a request selects that backend. |
 
 Redis connection setup retries rather than failing immediately. The local
@@ -370,7 +414,9 @@ is **15 seconds**; allow up to about 45–60 seconds after generating traffic.
 
 | Symptom | Where to look |
 | --- | --- |
-| `401` | Bearer header, `validate: unable to refresh SaaS JWKS`, `validate_and_decode_claims`, and `Can't extract the principal` logs. |
+| `401` | Bearer header, signature/issuer/audience/time checks, and principal claim types. |
+| `403` | Required API permission missing. |
+| `503` | `jwks_refresh` failure logs and JWKS reachability. |
 | `400` config error | `user_config_store_layer` and whether the publisher used the extracted user ID. A Redis GET failure also maps here. |
 | `404 Server not found` | `virtual_host_config_layer`; requested vhost versus caller's published configuration. |
 | MCP routing errors | `AuthorizedCallValidator::validate` log prefix (from `validate_stateless`), then `call_tool`, `read_resource`, or `get_prompt` diagnostics. |
@@ -412,6 +458,7 @@ cargo run --release -p contextforge-data-plane --features with_tools,plugins \
   --address 127.0.0.1:8001 \
   --redis-port 6379 --redis-address 127.0.0.1 --redis-mode plain-text \
   --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
+  --jwt-issuer local-dev --jwt-audiences local-gateway \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true \

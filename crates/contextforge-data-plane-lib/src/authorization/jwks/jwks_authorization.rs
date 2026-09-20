@@ -1,10 +1,11 @@
+use crate::JwksConfig;
 use crate::authorization::jwks::jwks::Jwks;
-use crate::authorization::{AuthorizationClaims, AuthorizationError, AuthorizationService};
+use crate::authorization::{AuthenticationError, AuthorizationClaims, AuthorizationError, AuthorizationService};
 use async_trait::async_trait;
 use jsonwebtoken::decode_header;
 use std::fmt;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tracing::instrument;
 use url::Url;
@@ -18,8 +19,9 @@ pub struct JwtAuthorizationService {
 }
 
 impl JwtAuthorizationService {
-    pub fn from_jwks_url(jwks_url: Url, ca_cert_path: Option<&PathBuf>) -> Result<Self, AuthorizationError> {
-        let url = parse_jwks_url(jwks_url)?;
+    pub fn new(config: &JwksConfig) -> Result<Self, AuthorizationError> {
+        let validation = Jwks::validation(config)?;
+        let url = parse_jwks_url(config.url.clone())?;
         let mut client = reqwest::Client::builder()
             .tls_backend_rustls()
             .connect_timeout(JWKS_CONNECT_TIMEOUT)
@@ -27,15 +29,15 @@ impl JwtAuthorizationService {
             .timeout(JWKS_REQUEST_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("mcp-ops/", env!("CARGO_PKG_VERSION")));
-        if let Some(ca_cert_path) = ca_cert_path {
+        if let Some(ca_cert_path) = &config.ca_cert_path {
             client = client.tls_certs_only(load_ca_certificates(ca_cert_path)?);
         }
         let client = client.build().map_err(AuthorizationError::JwksRequest)?;
-        Ok(Self { jwks: Jwks::builder().client(client).url(url).build() })
+        Ok(Self { jwks: Jwks::new(client, url, validation) })
     }
 
-    async fn authorize_token(&self, token: &str) -> Option<AuthorizationClaims> {
-        let header = decode_header(token).ok()?;
+    async fn authorize_token(&self, token: &str) -> Result<AuthorizationClaims, AuthenticationError> {
+        let header = decode_header(token).map_err(|_| AuthenticationError::InvalidToken)?;
         self.jwks.validate(token, &header).await
     }
 }
@@ -52,16 +54,17 @@ impl fmt::Debug for JwtAuthorizationService {
 #[async_trait]
 impl AuthorizationService for JwtAuthorizationService {
     #[instrument(name = "jwt_authorization_service", level = "info", skip_all)]
-    async fn authorize(&self, authorization_token: &http::HeaderValue) -> Option<AuthorizationClaims> {
-        let token = authorization_token.as_bytes().strip_prefix(b"Bearer ")?;
-        let token = str::from_utf8(token).ok()?;
-        let claims = self.authorize_token(token).await;
-
-        if claims.is_none() {
-            tracing::debug!("validate_saas_jwt  SaaS JWT was rejected");
+    async fn authorize(
+        &self,
+        authorization_token: &http::HeaderValue,
+    ) -> Result<AuthorizationClaims, AuthenticationError> {
+        let value = authorization_token.to_str().map_err(|_| AuthenticationError::InvalidToken)?;
+        let (scheme, token) = value.split_once(' ').ok_or(AuthenticationError::InvalidToken)?;
+        if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() || token.bytes().any(|b| b.is_ascii_whitespace())
+        {
+            return Err(AuthenticationError::InvalidToken);
         }
-
-        claims
+        self.authorize_token(token).await
     }
 }
 
@@ -69,9 +72,10 @@ fn parse_jwks_url(url: Url) -> Result<Url, AuthorizationError> {
     let secure = url.scheme() == "https";
     let local_http = url.scheme() == "http"
         && url.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+            host.eq_ignore_ascii_case("localhost")
+                || host.trim_matches(['[', ']']).parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
         });
-    if !secure && !local_http {
+    if (!secure && !local_http) || !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
         return Err(AuthorizationError::InsecureJwksUrl);
     }
     Ok(url)
@@ -89,313 +93,22 @@ fn load_ca_certificates(path: &Path) -> Result<Vec<reqwest::Certificate>, Author
 }
 
 #[cfg(test)]
-mod test {
-    use crate::{
-        Config,
-        authorization::{AuthorizationClaims, Scopes},
-        common::ContextForgeDataPlaneAppState,
-        config_stores::ConfigStoreError,
-        layers::claims_id::claims_layer,
-    };
-    use crate::{
-        authorization::{
-            AuthorizationError,
-            jwks::{
-                JwtAuthorizationService,
-                jwks::{JWKS_CACHE_KEY, Jwks, VerificationKey},
-                jwks_authorization::{JWKS_CONNECT_TIMEOUT, JWKS_READ_TIMEOUT, JWKS_REQUEST_TIMEOUT},
-            },
-        },
-        config_stores::ConfigStore,
-    };
-    use async_trait::async_trait;
-    use axum::{Router, body::Body, middleware, response::Response, routing::get};
-
-    use contextforge_data_plane_apis::{User, user_store::UserConfig};
-    use http::{HeaderMap, Request, StatusCode};
-    use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode};
-    use lru_time_cache::LruCache;
-    use serde_json::json;
-
-    use std::sync::{Arc, Once};
-    use std::{str::FromStr, time::Duration};
-    use tokio::sync::RwLock;
-    use tower::ServiceExt;
-
-    use url::Url;
-    use uuid::Uuid;
-
-    const GATEWAY_AUDIENCE: &str = "audience";
-    const GATEWAY_ISSUER: &str = "issuer";
-
-    impl VerificationKey {
-        pub fn new(id: Option<String>, decoding_key: DecodingKey) -> Self {
-            Self { key_id: id, decoding_key }
-        }
-    }
-
-    impl AuthorizationClaims {
-        fn clear(&mut self, name: &str) {
-            if let Some(value) = self.value.get_mut(name) {
-                *value = serde_json::Value::Null;
-            }
-        }
-
-        fn set(&mut self, name: &str, new_value: serde_json::Value) {
-            if let Some(value) = self.value.get_mut(name) {
-                *value = new_value;
-            }
-        }
-        fn get(&mut self, name: &str) -> Option<&serde_json::Value> {
-            self.value.get(name)
-        }
-    }
-
-    impl JwtAuthorizationService {
-        pub async fn from_keys(verification_keys: Vec<VerificationKey>) -> Result<Self, AuthorizationError> {
-            let url: Url = Url::from_str("http://127.0.0.1:0/").expect("this should work");
-            let client = reqwest::Client::builder()
-                .tls_backend_rustls()
-                .connect_timeout(JWKS_CONNECT_TIMEOUT)
-                .read_timeout(JWKS_READ_TIMEOUT)
-                .timeout(JWKS_REQUEST_TIMEOUT)
-                .redirect(reqwest::redirect::Policy::none())
-                .user_agent(concat!("mcp-ops/", env!("CARGO_PKG_VERSION")));
-
-            let client = client.build().map_err(AuthorizationError::JwksRequest)?;
-
-            let cache = RwLock::new(LruCache::with_expiry_duration(Duration::from_hours(100)));
-            let mut guard = cache.write().await;
-            guard.insert(JWKS_CACHE_KEY.to_owned(), verification_keys);
-            drop(guard);
-
-            Ok(Self { jwks: Jwks::builder().cache(cache).client(client).url(url).build() })
-        }
-    }
-
-    static CRYPTO: Once = Once::new();
-    const HMAC_SECRET: &[u8] = b"my-test-key-but-now-longer-than-32-bytes";
-
-    fn now_epoch_seconds() -> u64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Time went backwards").as_secs()
-    }
-
-    fn active_test_claims() -> AuthorizationClaims {
-        let now = now_epoch_seconds();
-        let user_id = "11111111-1111-1111-1111-111111111111".to_owned();
-
-        let map = json!( {
-            "iss": GATEWAY_ISSUER.to_owned(),
-            "sub": user_id.clone(),
-            "aud": GATEWAY_AUDIENCE.to_owned(),
-            "exp": now + Duration::from_hours(1).as_secs(),
-            "nbf": now - Duration::from_mins(1).as_secs(),
-            "iat": now,
-            "jti": Uuid::new_v4().to_string(),
-            "token_use": Some("api".to_owned()),
-            "teams": vec!["team_awesome".to_owned()],
-            "user": crate::authorization::User::builder()
-                .tenant_id("team_awesome".to_owned())
-                .user_id(user_id.clone())
-                .build(),
-            "scopes": Scopes::builder()
-                .server_id(Some("my_id".to_owned()))
-                .ip_restrictions(vec!["192.169.1.0/24".to_owned()])
-                .permissions(vec!["tools.read".to_owned(), "servers.use".to_owned()])
-                .time_restrictions(None)
-                .build(),
-            "tenant_id": "tenant".to_owned(),
-        });
-        AuthorizationClaims::from(map)
-    }
-
-    fn get_hmac_token_for_claims(claims: &AuthorizationClaims) -> String {
-        let key = EncodingKey::from_secret(HMAC_SECRET);
-        let header = Header::new(Algorithm::HS256);
-        let claims = claims.value.clone();
-        encode::<serde_json::Value>(&header, &claims, &key).expect("Expecting this to work")
-    }
-
-    #[derive(Debug, Clone)]
-    struct MockedUserConfigStore;
-    #[async_trait]
-    impl ConfigStore<User, UserConfig> for MockedUserConfigStore {
-        async fn get_config<'a>(&self, _: &'a User) -> Result<UserConfig, ConfigStoreError> {
-            Err(ConfigStoreError::InvalidConnection)
-        }
-
-        async fn set_config<'a>(&self, _: &'a User, _: &'a UserConfig) -> Result<(), ConfigStoreError> {
-            Err(ConfigStoreError::InvalidConnection)
-        }
-    }
-
+mod tests {
+    use super::*;
     #[test]
-    fn test_active_token() {
-        let mut claims = active_test_claims();
-        assert_ne!(claims.get("exp").and_then(serde_json::Value::as_i64), Some(0_i64));
-        claims.set("exp", 0.into());
-        assert_eq!(claims.get("exp").and_then(serde_json::Value::as_i64), Some(0_i64));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[allow(clippy::items_after_statements)]
-    #[test_log::test]
-    async fn claim_test_valid_hmac() {
-        CRYPTO.call_once(|| {
-            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        });
-
-        async fn handle(_: HeaderMap) -> Response {
-            Response::builder().status(StatusCode::OK).body(Body::empty()).expect("Expecting this to work")
+    fn only_trusted_transport_urls_are_accepted() {
+        for url in
+            ["https://issuer.example/keys", "http://localhost/keys", "http://127.0.0.1/keys", "http://[::1]/keys"]
+        {
+            assert!(parse_jwks_url(url.parse().unwrap()).is_ok(), "{url}");
         }
-
-        let token = get_hmac_token_for_claims(&active_test_claims());
-
-        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
-        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
-
-        let state = ContextForgeDataPlaneAppState {
-            authorization_service: Arc::new(
-                JwtAuthorizationService::from_keys(vec![verfication_key]).await.expect("this should work"),
-            ),
-            config_store: Arc::new(MockedUserConfigStore {}),
-            config: Config::default(),
-        };
-        let http_requst = Request::builder()
-            .header("Authorization", format!("Bearer {token}"))
-            .method("GET")
-            .body(Body::empty())
-            .expect("This should work");
-
-        let app =
-            Router::new().route("/", get(handle)).layer(middleware::from_fn_with_state(state.clone(), claims_layer));
-
-        let res = app.oneshot(http_requst).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[allow(clippy::items_after_statements)]
-    async fn claim_test_missing_scopes_is_allowed() {
-        CRYPTO.call_once(|| {
-            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        });
-
-        async fn handle(_: HeaderMap) -> Response {
-            Response::builder().status(StatusCode::OK).body(Body::empty()).expect("Expecting this to work")
+        for url in [
+            "http://issuer.example/keys",
+            "file:///keys",
+            "https://user:secret@issuer.example/keys",
+            "https://issuer.example/keys#fragment",
+        ] {
+            assert!(parse_jwks_url(url.parse().unwrap()).is_err(), "{url}");
         }
-
-        let mut claims = active_test_claims();
-        claims.clear("scopes");
-        let token = get_hmac_token_for_claims(&claims);
-
-        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
-        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
-        let state = ContextForgeDataPlaneAppState {
-            authorization_service: Arc::new(
-                JwtAuthorizationService::from_keys(vec![verfication_key]).await.expect("this should work"),
-            ),
-            config_store: Arc::new(MockedUserConfigStore {}),
-            config: Config::default(),
-        };
-        let http_requst = Request::builder()
-            .header("Authorization", format!("Bearer {token}"))
-            .method("GET")
-            .body(Body::empty())
-            .expect("This should work");
-
-        let app =
-            Router::new().route("/", get(handle)).layer(middleware::from_fn_with_state(state.clone(), claims_layer));
-
-        let res = app.oneshot(http_requst).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[allow(clippy::items_after_statements)]
-    async fn claim_test_missing_token_use_and_full_name_is_allowed() {
-        CRYPTO.call_once(|| {
-            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        });
-        let user_id = "11111111-1111-1111-1111-111111111111".to_owned();
-
-        async fn handle(_: HeaderMap) -> Response {
-            Response::builder().status(StatusCode::OK).body(Body::empty()).expect("Expecting this to work")
-        }
-
-        let mut claims = active_test_claims();
-        claims.clear("token_use");
-        claims.set(
-            "user",
-            serde_json::to_value(
-                crate::authorization::User::builder()
-                    .tenant_id("team_awesome".to_owned())
-                    .user_id(user_id.clone())
-                    .build(),
-            )
-            .expect("should work"),
-        );
-
-        let token = get_hmac_token_for_claims(&claims);
-
-        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
-        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
-
-        let state = ContextForgeDataPlaneAppState {
-            authorization_service: Arc::new(
-                JwtAuthorizationService::from_keys(vec![verfication_key]).await.expect("this should work"),
-            ),
-            config_store: Arc::new(MockedUserConfigStore {}),
-            config: Config::default(),
-        };
-        let http_requst = Request::builder()
-            .header("Authorization", format!("Bearer {token}"))
-            .method("GET")
-            .body(Body::empty())
-            .expect("This should work");
-
-        let app =
-            Router::new().route("/", get(handle)).layer(middleware::from_fn_with_state(state.clone(), claims_layer));
-
-        let res = app.oneshot(http_requst).await.unwrap();
-        assert_eq!(res.status(), StatusCode::OK);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    #[allow(clippy::items_after_statements)]
-    async fn claim_test_expired_token() {
-        CRYPTO.call_once(|| {
-            _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        });
-
-        async fn handle(_: HeaderMap) -> Response {
-            Response::builder().status(StatusCode::OK).body(Body::empty()).expect("Expecting this to work")
-        }
-
-        let mut claims = active_test_claims();
-        claims.set("exp", 1000.into());
-        let token = get_hmac_token_for_claims(&claims);
-
-        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
-        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
-
-        let state = ContextForgeDataPlaneAppState {
-            authorization_service: Arc::new(
-                JwtAuthorizationService::from_keys(vec![verfication_key]).await.expect("this should work"),
-            ),
-            config_store: Arc::new(MockedUserConfigStore {}),
-            config: Config::default(),
-        };
-        let http_requst = Request::builder()
-            .header("Authorization", format!("Bearer {token}"))
-            .method("GET")
-            .body(Body::empty())
-            .expect("This should work");
-
-        let app =
-            Router::new().route("/", get(handle)).layer(middleware::from_fn_with_state(state.clone(), claims_layer));
-
-        let res = app.oneshot(http_requst).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 }
