@@ -1,5 +1,5 @@
 IMAGE_NAME := contextforge-data-plane:latest
-SERVICES ?= nginx control-plane redis postgres pgbouncer data-plane fast_time_server register_fast_time
+SERVICES ?= nginx redis postgres pgbouncer data-plane fast_time_server seed-config
 ARGS     ?=
 CF_INTEGRATION ?= cf-integration
 CF_INTEGRATION_DIR ?= $(CURDIR)/.integration
@@ -11,7 +11,7 @@ CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
 DETECT_SECRETS_SPEC ?= git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976
 DETECT_SECRETS_EXCLUDE := '(?x)(Cargo\.lock$$|\.lock$$)|^\.secrets\.baseline$$'
 
-.PHONY: help docker-prod compose-up compose-down conformance conformance-bless docs-serve pre-commit secrets-scan-all configure-git
+.PHONY: help docker-prod docker-dev compose-up compose-down conformance conformance-bless docs-serve pre-commit secrets-scan-all configure-git
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
@@ -19,12 +19,11 @@ help: ## Show available commands
 docker-prod: ## Build production Docker image with plugins and without testing-only with_tools
 	docker build -t $(IMAGE_NAME) -f docker/Dockerfile .
 
-compose-up: ## Launch stack: nginx, control plane, redis, postgres, pgbouncer, dataplane, fast_time_server
-	@docker image inspect $(IMAGE_NAME) >/dev/null 2>&1 || { \
-		echo "Image $(IMAGE_NAME) not found. Run 'make docker-prod' first."; \
-		exit 1; \
-	}
-	docker compose -f docker/docker-compose.yml up -d $(SERVICES) $(ARGS)
+docker-dev: ## Build dev Docker image with plugins and with_tools admin helpers
+	docker build -t $(IMAGE_NAME) -f docker/Dockerfile --build-arg FEATURES=plugins,with_tools .
+
+compose-up: ## Launch stack: nginx, redis, postgres, pgbouncer, dataplane, fast_time_server, seed-config
+	docker compose -f docker/docker-compose.yml up --build -d $(SERVICES) $(ARGS)
 
 compose-down: ## Tear down the stack
 	docker compose -f docker/docker-compose.yml stop $(SERVICES) $(ARGS)

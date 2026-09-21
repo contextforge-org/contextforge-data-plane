@@ -59,12 +59,18 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   # contextforge-data-plane
   #
-  #
+  # Built with with_tools so the admin helpers (token minting, user-config
+  # seeding, JWKS endpoint) are available for the seed-config sidecar.
   # ──────────────────────────────────────────────────────────────────────
 
   data-plane:
     labels:
       name: contextforge-data-plane
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        FEATURES: plugins,with_tools
     image: ${IMAGE_LOCAL:-contextforge-data-plane:latest}
     networks: [contextforge-stack-net]
 
@@ -74,9 +80,15 @@ services:
       - CONTEXTFORGE_DATA_PLANE_REDIS_PORT=6379
       - CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE=plain-text
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
-      # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
-      - CONTEXTFORGE_DATA_PLANE_JWKS_URL
+      - CONTEXTFORGE_DATA_PLANE_JWKS_URL=http://localhost:4445/contextforge-rs/admin/.well-known/jwks.json
       - RUST_LOG=debug
+
+    command:
+      - "--token-verification-private-key"
+      - "/keys/jwt.key"
+
+    volumes:
+      - ../assets/jwt.key:/keys/jwt.key:ro
 
     sysctls:
       - net.ipv4.tcp_fin_timeout=15
@@ -88,8 +100,6 @@ services:
 
     depends_on:
       redis:
-        condition: service_healthy
-      control-plane:
         condition: service_healthy
 
     healthcheck:
@@ -113,7 +123,7 @@ services:
 
     deploy:
       mode: replicated
-      replicas: ${GATEWAY_REPLICAS:-1}
+      replicas: ${GATEWAY_REPLICAS:-3}
       resources:
         limits:
           cpus: '${GATEWAY_CPU_LIMIT:-2}'
@@ -134,9 +144,15 @@ services:
       - CONTEXTFORGE_DATA_PLANE_REDIS_PORT=6379
       - CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE=plain-text
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
-      # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
-      - CONTEXTFORGE_DATA_PLANE_JWKS_URL
+      - CONTEXTFORGE_DATA_PLANE_JWKS_URL=http://localhost:4445/contextforge-rs/admin/.well-known/jwks.json
       - RUST_LOG=debug
+
+    command:
+      - "--token-verification-private-key"
+      - "/keys/jwt.key"
+
+    volumes:
+      - ../assets/jwt.key:/keys/jwt.key:ro
 
     sysctls:
       - net.ipv4.tcp_fin_timeout=15
@@ -171,9 +187,15 @@ services:
       - CONTEXTFORGE_DATA_PLANE_REDIS_PORT=6379
       - CONTEXTFORGE_DATA_PLANE_REDIS_CONNECTION_MODE=plain-text
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
-      # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
-      - CONTEXTFORGE_DATA_PLANE_JWKS_URL
+      - CONTEXTFORGE_DATA_PLANE_JWKS_URL=http://localhost:4445/contextforge-rs/admin/.well-known/jwks.json
       - RUST_LOG=debug
+
+    command:
+      - "--token-verification-private-key"
+      - "/keys/jwt.key"
+
+    volumes:
+      - ../assets/jwt.key:/keys/jwt.key:ro
 
     sysctls:
       - net.ipv4.tcp_fin_timeout=15
@@ -300,91 +322,7 @@ services:
           memory: 512M
 
   ###############################################################################
-  #  MIGRATION - one-shot Alembic upgrade + bootstrap, runs before control-plane
-  ###############################################################################
-  migration:
-    # One-shot init container: runs alembic upgrade head + bootstrap before any gateway replica starts.
-    # Uses Postgres directly (port 5432) — advisory locks are session-scoped, must bypass PgBouncer.
-    image: ghcr.io/ibm/mcp-context-forge:d24df05e7985787bfa3264ab45cee411e308a111
-    container_name: migration
-    environment:
-      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-devsecret-change-me}
-      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
-      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
-      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
-      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-devencryption-change-me}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - MCPGATEWAY_SKIP_MIGRATIONS=false
-    command: ["python", "-m", "mcpgateway.bootstrap_db"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks: [contextforge-stack-net]
-    restart: "no"
-
-  ###############################################################################
-  #  CONTROL PLANE - ContextForge (Python) - config, policy and identity owner
-  ###############################################################################
-  control-plane:
-    labels:
-      name: controlplane
-    image: ghcr.io/ibm/mcp-context-forge:d24df05e7985787bfa3264ab45cee411e308a111
-    container_name: control-plane
-    restart: unless-stopped
-    networks: [contextforge-stack-net]
-    ports:
-      - "4444:4444"
-    environment:
-      - HOST=0.0.0.0
-      - PORT=4444
-      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
-      - DB_PREPARE_THRESHOLD=0  # PgBouncer runs POOL_MODE=transaction; server-side prepared statements don't survive connection handoff between transactions
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-devsecret-change-me}
-      - JWT_ALGORITHM=RS256
-      - JWT_PUBLIC_KEY_PATH=/keys/jwt.key.pub
-      - JWT_PRIVATE_KEY_PATH=/keys/jwt.key
-      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-devencryption-change-me}
-      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
-      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
-      - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - MCPGATEWAY_SKIP_MIGRATIONS=true
-      - SECURE_COOKIES=${SECURE_COOKIES:-false}
-      - MCPGATEWAY_UI_ENABLED=true
-      - MCPGATEWAY_ADMIN_API_ENABLED=true
-      - SSRF_ALLOW_PRIVATE_NETWORKS=true
-      - REDIS_URL=redis://redis:6379/0
-      - CACHE_TYPE=redis
-      - DATAPLANE_PUBLISHER=true
-    volumes:
-      - ../assets/:/keys:z
-    depends_on:
-      migration:
-        condition: service_completed_successfully
-      pgbouncer:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4444/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '1'
-          memory: 1G
-
-  ###############################################################################
-  #  DATABASE - control plane storage
+  #  DATABASE - control plane storage (kept for external control-plane use)
   ###############################################################################
   postgres:
     image: postgres:18
@@ -507,6 +445,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+
   ###############################################################################
   # TEST MCP SERVER - Fast Time Server
   ###############################################################################
@@ -545,155 +484,92 @@ services:
         reservations:
           cpus: '0.5'
           memory: 256M
-    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
-  # AUTO-REGISTRATION - Register Fast Time Server with control-plane
+  # SEED CONFIG - Register Fast Time Server via data-plane admin API
+  #
+  # One-shot container that discovers tools from fast_time_server and seeds
+  # a UserConfig into Redis through the data-plane's /admin/userconfigs
+  # endpoint. The data-plane reads this config from Redis at request time.
   ###############################################################################
-  register_fast_time:
-    image: ghcr.io/ibm/mcp-context-forge:d24df05e7985787bfa3264ab45cee411e308a111
-    container_name: register_fast_time
+  seed-config:
+    image: alpine:latest
+    container_name: seed-config
     networks: [contextforge-stack-net]
     depends_on:
-      control-plane:
+      data-plane:
         condition: service_healthy
       fast_time_server:
         condition: service_healthy
-    environment:
-      - JWT_ALGORITHM=RS256
-      - JWT_PUBLIC_KEY_PATH=/keys/jwt.key.pub
-      - JWT_PRIVATE_KEY_PATH=/keys/jwt.key
-    volumes:
-      - ../assets/:/keys:z
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -e
-        echo "Registering fast_time_server with control-plane..."
+        apk add --no-cache curl jq > /dev/null 2>&1
 
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 2>/dev/null)
+        DATAPLANE=http://data-plane:4445/contextforge-rs
+        BACKEND_URL=http://fast_time_server:8880/mcp
+        USER_ID=11111111-1111-1111-1111-111111111111
+        VIRTUAL_HOST_ID=b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8
+        BACKEND_NAME=fast-time
 
-        python3 -c "
-        import json
-        import os
-        import time
-        import urllib.error
-        import urllib.request
+        MCP_META='{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"seed","version":"0.1.0"},"io.modelcontextprotocol/clientCapabilities":{}}'
 
-        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        # Parse a response that may arrive as direct JSON or SSE.
+        parse_mcp_response() {
+          local raw="$$1"
+          if printf '%s' "$$raw" | grep -q '^data:'; then
+            printf '%s' "$$raw" | grep '^data:' | head -1 | sed 's/^data: *//'
+          else
+            printf '%s' "$$raw"
+          fi
+        }
 
-        def api_request(method, path, data=None):
-            url = f'http://control-plane:4444{path}'
-            req = urllib.request.Request(url, method=method)
-            req.add_header('Authorization', f'Bearer {token}')
-            req.add_header('Content-Type', 'application/json')
-            if data:
-                req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req, timeout=60) as response:
-                return json.loads(response.read().decode('utf-8'))
+        echo "Discovering tools from fast_time_server..."
+        RAW=$$(curl -sf "$$BACKEND_URL" \
+          -H 'content-type: application/json' \
+          -H 'accept: application/json, text/event-stream' \
+          -H 'mcp-protocol-version: 2026-07-28' \
+          -H 'mcp-method: server/discover' \
+          -H 'mcp-name: seed' \
+          -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{\"_meta\":$$MCP_META}}")
+        DISCOVER=$$(parse_mcp_response "$$RAW")
+        echo "Discover: $$(echo "$$DISCOVER" | jq -c '.result.serverInfo // .result')"
 
-        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
-            for attempt in range(1, retries + 1):
-                try:
-                    return api_request(method, path, data)
-                except urllib.error.HTTPError as exc:
-                    if exc.code in retry_statuses and attempt < retries:
-                        print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
-                        time.sleep(delay)
-                        continue
-                    raise
-                except Exception:
-                    if attempt < retries:
-                        print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
-                        time.sleep(delay)
-                        continue
-                    raise
+        RAW=$$(curl -sf "$$BACKEND_URL" \
+          -H 'content-type: application/json' \
+          -H 'accept: application/json, text/event-stream' \
+          -H 'mcp-protocol-version: 2026-07-28' \
+          -H 'mcp-method: tools/list' \
+          -H 'mcp-name: seed' \
+          -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{\"_meta\":$$MCP_META}}")
+        TOOLS_RESPONSE=$$(parse_mcp_response "$$RAW")
 
-        print('Waiting for authenticated control-plane readiness...')
-        for i in range(1, 61):
-            try:
-                gateways = api_request('GET', '/gateways')
-                print(f'Authenticated control-plane readiness confirmed ({len(gateways)} gateways visible)')
-                break
-            except urllib.error.HTTPError as exc:
-                print(f'Authenticated readiness not ready yet ({i}/60): HTTP {exc.code}')
-            except Exception as exc:
-                print(f'Authenticated readiness not ready yet ({i}/60): {exc}')
-            time.sleep(2)
-        else:
-            print('Control-plane authenticated readiness check failed')
-            exit(1)
+        TOOL_NAMES=$$(echo "$$TOOLS_RESPONSE" | jq -r '.result.tools[].name // empty')
+        echo "Tools found: $$TOOL_NAMES"
 
-        try:
-            gateways = api_request_with_retry('GET', '/gateways')
-            for gw in gateways:
-                if gw.get('name') == 'fast_time':
-                    print(f'Deleting existing gateway {gw[\"id\"]}...')
-                    api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}')
-        except Exception as exc:
-            print(f'Note: {exc}')
+        # Build the tools routing map: each tool prefixed with backend name.
+        TOOLS_JSON=$$(echo "$$TOOLS_RESPONSE" | jq -c \
+          --arg bn "$$BACKEND_NAME" \
+          '[.result.tools[].name] | reduce .[] as $$n ({}; . + {($$bn + "-" + $$n): {backend_name: $$bn, upstream_name: $$n}})')
 
-        VIRTUAL_SERVER_ID = 'b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8'
+        CONFIG=$$(jq -n \
+          --arg vhid "$$VIRTUAL_HOST_ID" \
+          --arg bn "$$BACKEND_NAME" \
+          --arg url "$$BACKEND_URL" \
+          --argjson tools "$$TOOLS_JSON" \
+          '{virtual_hosts: {($$vhid): {backends: {($$bn): {name: $$bn, url: $$url, mcp_protocol_version: "2026-07-28", passthrough_headers: []}}, tools: $$tools}}}')
 
-        try:
-            api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
-            print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
-        except Exception as exc:
-            print(f'Note: No existing virtual server to delete (or error: {exc})')
+        echo "Seeding user config for $$USER_ID..."
+        HTTP_CODE=$$(curl -sf -w '%{http_code}' -o /tmp/seed_response \
+          -X POST "$$DATAPLANE/admin/userconfigs/$$USER_ID" \
+          -H 'content-type: application/json' \
+          -d "$$CONFIG")
 
-        try:
-            result = api_request_with_retry('POST', '/gateways', {
-                'name': 'fast_time',
-                'url': 'http://fast_time_server:8880/mcp',
-                'transport': 'STREAMABLEHTTP'
-            })
-            gateway_id = result.get('id', '')
-            print(f'Registered fast_time_server (gateway_id: {gateway_id})')
-        except Exception as exc:
-            print(f'Registration failed: {exc}')
-            exit(1)
-
-        print('Waiting for tools to sync...')
-        for i in range(30):
-            time.sleep(1)
-            try:
-                tools = api_request_with_retry('GET', '/tools')
-                fast_time_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
-                if fast_time_tools:
-                    print(f'Found {len(fast_time_tools)} tools from fast_time gateway')
-                    break
-            except Exception:
-                pass
-            print(f'Waiting for sync... ({i + 1}/30)')
-        else:
-            print('Warning: No tools synced, continuing anyway...')
-
-        tool_ids = []
-        try:
-            tools = api_request_with_retry('GET', '/tools')
-            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
-            print(f'Tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
-        except Exception as exc:
-            print(f'Failed to fetch tools: {exc}')
-
-        print('Creating virtual server...')
-        try:
-            server_payload = {
-                'server': {
-                    'id': VIRTUAL_SERVER_ID,
-                    'name': 'Fast Time Server',
-                    'description': 'Virtual server exposing Fast Time MCP tools',
-                    'associated_tools': tool_ids,
-                    'associated_resources': [],
-                    'associated_prompts': []
-                }
-            }
-            api_request_with_retry('POST', '/servers', server_payload)
-            print(f'Virtual server created: {VIRTUAL_SERVER_ID} with {len(tool_ids)} tools')
-        except Exception as exc:
-            print(f'Failed to create virtual server: {exc}')
-            exit(1)
-        "
-        echo "Fast Time Server registration complete!"
-    profiles: ["testing", "monitoring", "sso"]
+        echo "Seed response: HTTP $$HTTP_CODE — $$(cat /tmp/seed_response)"
+        echo "Virtual host: $$VIRTUAL_HOST_ID"
+        echo "Tools registered: $$(echo "$$TOOLS_JSON" | jq -r 'keys[]')"
+        echo ""
+        echo "Mint a token from the host:"
+        echo "  curl http://localhost:8080/contextforge-rs/admin/tokens/team_awesome/$$USER_ID?email=admin@example.com"

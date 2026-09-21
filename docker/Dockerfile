@@ -7,14 +7,16 @@ apt install -y ca-certificates protobuf-compiler
 EOF
 
 COPY . .
-# Production builds exclude the testing-only with_tools feature.
+# Default: production build with plugin factories, no testing-only helpers.
+# Override with --build-arg FEATURES=plugins,with_tools for dev/compose images.
+ARG FEATURES=plugins
 RUN --mount=type=cache,id=cargo,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo fetch --locked
 RUN --mount=type=cache,id=cargo,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=contextforge-data-plane-target,target=/app/target,sharing=locked \
-    cargo build --locked --release -p contextforge-data-plane --features plugins \
+    cargo build --locked --release -p contextforge-data-plane --features "${FEATURES}" \
     && mkdir -p /out \
     && cp /app/target/release/contextforge-data-plane /out/contextforge-data-plane
 
