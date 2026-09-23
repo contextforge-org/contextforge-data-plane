@@ -148,8 +148,6 @@ pub struct JwksConfig {
     pub ca_cert_path: Option<PathBuf>,
     pub issuer: String,
     pub audiences: Vec<String>,
-    pub algorithms: Vec<jsonwebtoken::Algorithm>,
-    pub leeway_seconds: u64,
 }
 impl From<&CliConfig> for JwksConfig {
     fn from(value: &CliConfig) -> Self {
@@ -159,8 +157,6 @@ impl From<&CliConfig> for JwksConfig {
             ca_cert_path: jwks_ca_cert_path,
             issuer: value.jwt_issuer.clone(),
             audiences: value.jwt_audiences.clone(),
-            algorithms: value.jwt_algorithms.clone(),
-            leeway_seconds: value.jwt_leeway_seconds,
         }
     }
 }
@@ -171,7 +167,6 @@ pub struct Config {
 
     pub observability_config: ObservabilityConfig,
     pub jwks_config: JwksConfig,
-    pub principal_config: crate::authorization::PrincipalConfig,
 
     /// Expiry in seconds for the in-process user config cache in front of
     /// Redis. The control-plane dataplane publisher rewrites UserConfig keys
@@ -421,8 +416,6 @@ mod tests {
                 ca_cert_path: None,
                 issuer: "mcpgateway".to_owned(),
                 audiences: vec!["mcpgateway-api".to_owned()],
-                algorithms: vec![jsonwebtoken::Algorithm::RS256],
-                leeway_seconds: 30,
             }
         }
     }
@@ -432,7 +425,6 @@ mod tests {
             Self {
                 address: None,
                 jwks_config: super::JwksConfig::default(),
-                principal_config: crate::authorization::PrincipalConfig::default(),
                 observability_config: super::ObservabilityConfig::default(),
                 mcp_standard_header_max_count: 10,
                 mcp_standard_header_max_value_bytes: 4096,

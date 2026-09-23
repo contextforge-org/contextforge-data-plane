@@ -53,10 +53,7 @@ pub fn create_default_config() -> Config {
             ca_cert_path: None,
             issuer: "mcpgateway".to_owned(),
             audiences: vec!["mcpgateway-api".to_owned()],
-            algorithms: vec![jsonwebtoken::Algorithm::RS256],
-            leeway_seconds: 30,
         },
-        principal_config: contextforge_data_plane_lib::PrincipalConfig::default(),
 
         mcp_standard_header_max_count: 10,
         mcp_standard_header_max_value_bytes: 4096,

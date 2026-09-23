@@ -53,8 +53,8 @@ use crate::{
     },
 };
 pub use authorization::{
-    AuthenticationError, AuthorizationClaims, AuthorizationService, AuthorizedPrincipal, Permission, PrincipalConfig,
-    ScopeMapping, UserClaim, get_authorization_service,
+    AuthenticationError, AuthorizationClaims, AuthorizationService, AuthorizedPrincipal, Permission,
+    get_authorization_service,
 };
 pub use layers::permission::require_permission;
 
@@ -113,7 +113,6 @@ impl Gateway {
     /// callers bind listeners before starting the service.
     pub async fn into_router(self) -> Result<axum::Router> {
         let Gateway { config, session_manager, user_config_store_type, plugin_runtime, authorization_service } = self;
-        config.principal_config.validate()?;
         let user_config_store = match user_config_store_type {
             UserConfigStoreType::Redis => Arc::new(get_config_store(&config).await?),
             UserConfigStoreType::Test(store) => store,
@@ -152,14 +151,11 @@ impl Gateway {
             .layer(middleware::from_fn_with_state(Permission::MCPUser, require_permission));
 
         let app = if let Some(cel_principal_extractor_path) = config.cel_principal_extractor_path.as_ref() {
-            app.layer(layers::PrincipalExtractorLayer::new(
-                CelPrincipalExtractor::from_file(cel_principal_extractor_path)?
-                    .with_config(config.principal_config.clone()),
-            ))
+            app.layer(layers::PrincipalExtractorLayer::new(CelPrincipalExtractor::from_file(
+                cel_principal_extractor_path,
+            )?))
         } else {
-            app.layer(layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor::new(
-                config.principal_config.clone(),
-            )))
+            app.layer(layers::PrincipalExtractorLayer::new(DefaultPrincipalExtractor {}))
         };
 
         let app = app

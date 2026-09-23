@@ -1,16 +1,8 @@
-use super::{AuthorizedPrincipal, PrincipalConfig, PrincipalExtractor};
+use super::{AuthorizedPrincipal, PrincipalExtractor};
 use tracing::instrument;
 
 #[derive(Debug, Clone, Default)]
-pub struct DefaultPrincipalExtractor {
-    config: PrincipalConfig,
-}
-
-impl DefaultPrincipalExtractor {
-    pub fn new(config: PrincipalConfig) -> Self {
-        Self { config }
-    }
-}
+pub struct DefaultPrincipalExtractor {}
 
 impl PrincipalExtractor for DefaultPrincipalExtractor {
     #[instrument(name = "principal_extract", level = "info", skip_all)]
@@ -18,14 +10,14 @@ impl PrincipalExtractor for DefaultPrincipalExtractor {
         &self,
         claims: &serde_json::Value,
     ) -> Result<AuthorizedPrincipal, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(AuthorizedPrincipal::from_claims(claims, &self.config)?)
+        Ok(AuthorizedPrincipal::from_claims(claims)?)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::authorization::{Permission, ScopeMapping, UserClaim};
+    use crate::authorization::Permission;
     use serde_json::{Value, json};
 
     fn claims() -> Value {
@@ -60,11 +52,13 @@ mod tests {
     }
 
     #[test]
-    fn identity_profile_and_tenant_aliases_are_strict() {
+    fn subject_and_tenant_aliases_are_required() {
         let mut claims = claims();
-        let extractor =
-            DefaultPrincipalExtractor::new(PrincipalConfig { user_claim: UserClaim::WoUserId, ..Default::default() });
-        assert_eq!(extractor.extract(&claims).unwrap().user_id(), "watson-user");
+        let extractor = DefaultPrincipalExtractor {};
+        assert_eq!(extractor.extract(&claims).unwrap().user_id(), "subject");
+        let mut missing_sub = claims.clone();
+        missing_sub.as_object_mut().unwrap().remove("sub");
+        assert!(extractor.extract(&missing_sub).is_err());
         claims["tenant_id"] = "tenant".into();
         assert!(extractor.extract(&claims).is_ok());
         claims["tenantId"] = "different".into();
@@ -83,44 +77,8 @@ mod tests {
     }
 
     #[test]
-    fn scopes_only_grant_permissions_when_configured() {
-        let mut claims = claims();
-        claims["role"] = "unknown".into();
-        claims["scope"] = "aipg.admin unrelated".into();
-        assert!(!DefaultPrincipalExtractor::default().extract(&claims).unwrap().has_permission(Permission::Admin));
-        let mapping = ScopeMapping { admin: vec!["aipg.admin".into()], mcp_user: vec!["aipg.mcp".into()] };
-        let mut config = PrincipalConfig { scope_mapping: Some(mapping), ..Default::default() };
-        assert!(
-            !DefaultPrincipalExtractor::new(config.clone()).extract(&claims).unwrap().has_permission(Permission::Admin)
-        );
-        config.scopes_only = true;
-        assert!(
-            DefaultPrincipalExtractor::new(config.clone()).extract(&claims).unwrap().has_permission(Permission::Admin)
-        );
-        claims["scope"] = "".into();
-        claims["permissions"] = json!(["aipg.mcp"]);
-        let principal = DefaultPrincipalExtractor::new(config.clone()).extract(&claims).unwrap();
-        assert!(!principal.has_permission(Permission::Admin));
-        assert!(principal.has_permission(Permission::MCPUser));
-        assert_eq!(principal.scopes(), &["aipg.mcp"]);
-        config.scopes_only = false;
-        claims["role"] = "admin".into();
-        assert!(
-            !DefaultPrincipalExtractor::new(config.clone()).extract(&claims).unwrap().has_permission(Permission::Admin)
-        );
-        claims["permissions"] = json!([]);
-        assert!(!DefaultPrincipalExtractor::new(config).extract(&claims).unwrap().has_permission(Permission::MCPUser));
-    }
-
-    #[test]
     fn malformed_permission_claims_are_rejected() {
-        for (name, value) in [
-            ("role", json!(["admin"])),
-            ("roles", json!("admin")),
-            ("roles", json!([42])),
-            ("scope", json!(["aipg.admin"])),
-            ("permissions", json!({"admin":true})),
-        ] {
+        for (name, value) in [("role", json!(["admin"])), ("roles", json!("admin")), ("roles", json!([42]))] {
             let mut claims = claims();
             claims[name] = value;
             assert!(DefaultPrincipalExtractor::default().extract(&claims).is_err(), "{name}");
@@ -128,7 +86,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_does_not_disclose_identity_or_scopes() {
+    fn debug_does_not_disclose_identity() {
         let principal = DefaultPrincipalExtractor::default().extract(&claims()).unwrap();
         let debug = format!("{principal:?}");
         for sensitive in ["watson", "subject", "tenant"] {

@@ -2,15 +2,13 @@ use std::time::Duration;
 
 use futures::StreamExt as _;
 use jsonwebtoken::{
-    AlgorithmFamily, DecodingKey, Header, Validation, decode,
+    Algorithm, DecodingKey, Header, Validation, decode,
     jwk::{Jwk, JwkSet, KeyOperations, PublicKeyUse},
 };
+use lru_time_cache::LruCache;
 use reqwest::Url;
 use serde_json::Value;
-use tokio::{
-    sync::{Mutex, RwLock},
-    time::Instant,
-};
+use tokio::sync::RwLock;
 
 use crate::{
     JwksConfig,
@@ -18,51 +16,34 @@ use crate::{
 };
 
 const JWKS_CACHE_TTL: Duration = Duration::from_mins(5);
-const JWKS_REFRESH_COOLDOWN: Duration = Duration::from_secs(5);
+const JWKS_CACHE_KEY: &str = "jwks";
 const JWKS_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
-
-struct CachedKeys {
-    keys: Vec<VerificationKey>,
-    expires_at: Instant,
-}
-
-#[derive(Default)]
-struct RefreshState {
-    last_attempt: Option<Instant>,
-    failed: bool,
-}
 
 pub(super) struct Jwks {
     client: reqwest::Client,
     url: Url,
     validation: Validation,
-    cache: RwLock<Option<CachedKeys>>,
-    // One refresh in flight, including concurrent unknown-kid requests.
-    refresh: Mutex<RefreshState>,
+    cache: RwLock<LruCache<String, Vec<VerificationKey>>>,
 }
 
 impl Jwks {
     pub fn new(client: reqwest::Client, url: Url, validation: Validation) -> Self {
-        Self { client, url, validation, cache: RwLock::new(None), refresh: Mutex::new(RefreshState::default()) }
+        Self { client, url, validation, cache: RwLock::new(LruCache::with_expiry_duration(JWKS_CACHE_TTL)) }
     }
 
     pub fn validation(config: &JwksConfig) -> Result<Validation, AuthorizationError> {
         if config.issuer.trim().is_empty()
             || config.audiences.is_empty()
             || config.audiences.iter().any(|aud| aud.trim().is_empty())
-            || config.algorithms.is_empty()
-            || config.algorithms.iter().any(|alg| !matches!(alg.family(), AlgorithmFamily::Rsa | AlgorithmFamily::Ec))
-            || config.leeway_seconds > 300
         {
             return Err(AuthorizationError::InvalidTrustConfiguration);
         }
-        let mut validation = Validation::new(config.algorithms[0]);
-        validation.algorithms.clone_from(&config.algorithms);
+        let mut validation = Validation::new(Algorithm::RS256);
         validation.set_required_spec_claims(&["exp", "iss", "aud"]);
         validation.set_issuer(&[&config.issuer]);
         validation.set_audience(&config.audiences);
         validation.validate_nbf = true;
-        validation.leeway = config.leeway_seconds;
+        validation.leeway = 30;
         Ok(validation)
     }
 
@@ -72,47 +53,21 @@ impl Jwks {
         {
             return Err(AuthenticationError::InvalidToken);
         }
-        if let Some(result) = self.validate_cached(token, header).await {
-            return result;
+        {
+            let cache = self.cache.read().await;
+            if let Some(keys) = cache.peek(JWKS_CACHE_KEY)
+                && let Some(result) = self.validate_with_keys(keys, token, header)
+            {
+                return result;
+            }
         }
-
-        let mut refresh = self.refresh.lock().await;
-        // Another request may have loaded or rotated the keys while we waited.
-        if let Some(result) = self.validate_cached(token, header).await {
-            return result;
-        }
-        if refresh.last_attempt.is_some_and(|time| time.elapsed() < JWKS_REFRESH_COOLDOWN) {
-            return Err(if refresh.failed {
-                AuthenticationError::KeysUnavailable
-            } else {
-                AuthenticationError::InvalidToken
-            });
-        }
-        // Record before awaiting I/O so cancellation cannot bypass the cooldown.
-        refresh.last_attempt = Some(Instant::now());
-        refresh.failed = true;
-        let result = fetch_jwks(&self.client, &self.url).await;
-        refresh.last_attempt = Some(Instant::now());
-        refresh.failed = result.is_err();
-        let keys = result.map_err(|_| {
-            // Do not log response bodies, key material, tokens, or URLs with query credentials.
+        let keys = fetch_jwks(&self.client, &self.url).await.map_err(|_| {
             tracing::warn!("jwks_refresh - unable to retrieve usable verification keys");
             AuthenticationError::KeysUnavailable
         })?;
         let claims = self.validate_with_keys(&keys, token, header).unwrap_or(Err(AuthenticationError::InvalidToken));
-        *self.cache.write().await = Some(CachedKeys { keys, expires_at: Instant::now() + JWKS_CACHE_TTL });
-        tracing::info!("jwks_refresh - verification keys refreshed");
+        self.cache.write().await.insert(JWKS_CACHE_KEY.to_owned(), keys);
         claims
-    }
-
-    async fn validate_cached(
-        &self,
-        token: &str,
-        header: &Header,
-    ) -> Option<Result<AuthorizationClaims, AuthenticationError>> {
-        let cache = self.cache.read().await;
-        let cache = cache.as_ref().filter(|cache| cache.expires_at > Instant::now())?;
-        self.validate_with_keys(&cache.keys, token, header)
     }
 
     fn validate_with_keys(

@@ -7,7 +7,7 @@ use serde_json::Value as JsonValue;
 use thiserror::Error;
 use tracing::instrument;
 
-use super::{AuthorizedPrincipal, PrincipalConfig, PrincipalExtractor, UserClaim};
+use super::{AuthorizedPrincipal, PrincipalExtractor};
 
 #[derive(Error, Debug)]
 pub enum CelPrincipalExtractorError {
@@ -24,23 +24,14 @@ pub enum CelPrincipalExtractorError {
     InvalidReturnType(JsonValue),
 }
 
-/// Trusted CEL mapping for nonstandard claims. Return `user_id`, `tenant_id`,
-/// and optional `role`, `roles`, `scope`, `permissions`. Permissions are always
-/// computed by the same policy as the default extractor. The verified issuer
-/// is taken from the original claims and cannot be overridden by CEL.
+/// CEL maps user_id and tenant_id. Roles and issuer always come from the
+/// original verified claims and use the same policy as the default extractor.
 #[derive(Clone, Debug)]
 pub struct CelPrincipalExtractor {
     program: Arc<Program>,
-    config: PrincipalConfig,
 }
 
 impl CelPrincipalExtractor {
-    pub fn with_config(mut self, mut config: PrincipalConfig) -> Self {
-        config.user_claim = UserClaim::Sub;
-        self.config = config;
-        self
-    }
-
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, CelPrincipalExtractorError> {
         let expression = fs::read_to_string(path)?;
         Self::from_expression(&expression)
@@ -50,7 +41,7 @@ impl CelPrincipalExtractor {
         let program =
             Program::compile(expression).map_err(|e| CelPrincipalExtractorError::CompilationError(e.to_string()))?;
 
-        Ok(Self { program: Arc::new(program), config: PrincipalConfig::default() })
+        Ok(Self { program: Arc::new(program) })
     }
 }
 
@@ -73,29 +64,19 @@ impl PrincipalExtractor for CelPrincipalExtractor {
             return Err(CelPrincipalExtractorError::InvalidReturnType(JsonValue::Null).into());
         };
         let mut normalized = serde_json::Map::new();
-        for name in ["user_id", "tenant_id", "role", "roles", "scope", "permissions"] {
-            if let Some(value) = map.get(&Key::from(name.to_owned())) {
-                let value = match value {
-                    cel::Value::String(value) => JsonValue::String(value.to_string()),
-                    cel::Value::List(values) => JsonValue::Array(
-                        values
-                            .iter()
-                            .map(|value| {
-                                if let cel::Value::String(value) = value {
-                                    JsonValue::String(value.to_string())
-                                } else {
-                                    JsonValue::Null
-                                }
-                            })
-                            .collect(),
-                    ),
-                    _ => JsonValue::Null,
-                };
-                normalized.insert(if name == "user_id" { "sub" } else { name }.to_owned(), value);
+        for (name, claim) in [("user_id", "sub"), ("tenant_id", "tenant_id")] {
+            let value = match map.get(&Key::from(name.to_owned())) {
+                Some(cel::Value::String(value)) => JsonValue::String(value.to_string()),
+                _ => JsonValue::Null,
+            };
+            normalized.insert(claim.to_owned(), value);
+        }
+        for name in ["iss", "role", "roles"] {
+            if let Some(value) = claims.get(name) {
+                normalized.insert(name.to_owned(), value.clone());
             }
         }
-        normalized.insert("iss".to_owned(), claims.get("iss").cloned().unwrap_or(JsonValue::Null));
-        Ok(AuthorizedPrincipal::from_claims(&JsonValue::Object(normalized), &self.config)?)
+        Ok(AuthorizedPrincipal::from_claims(&JsonValue::Object(normalized))?)
     }
 }
 
@@ -172,19 +153,18 @@ mod permission_tests {
     use crate::Permission;
 
     #[test]
-    fn nested_roles_use_common_policy_and_cannot_override_issuer() {
-        let extractor = CelPrincipalExtractor::from_expression(r#"{"user_id": claims.sub, "tenant_id": claims.woTenantId, "roles": claims.user.roles, "iss": "untrusted"}"#).unwrap();
-        let principal = extractor
-            .extract(&serde_json::json!({"sub":"user","woTenantId":"tenant","iss":"watson","user":{"roles":["admin"]}}))
-            .unwrap();
+    fn mapping_cannot_override_verified_roles_or_issuer() {
+        let extractor = CelPrincipalExtractor::from_expression(
+            r#"{"user_id": claims.sub, "tenant_id": claims.woTenantId, "role": "admin", "iss": "other"}"#,
+        )
+        .unwrap();
+        let claims = serde_json::json!({"sub":"user","woTenantId":"tenant","iss":"watson","roles":["user"]});
+        let principal = extractor.extract(&claims).unwrap();
         assert_eq!(principal.issuer(), "watson");
-        assert!(principal.has_permission(Permission::Admin));
-        let extractor =
-            CelPrincipalExtractor::from_expression(r#"{"user_id": claims.sub, "tenant_id": claims.woTenantId}"#)
-                .unwrap();
-        let principal = extractor
-            .extract(&serde_json::json!({"sub":"user","woTenantId":"tenant","iss":"watson","role":"admin"}))
-            .unwrap();
-        assert!(!principal.has_permission(Permission::MCPUser));
+        assert!(principal.has_permission(Permission::MCPUser));
+        assert!(!principal.has_permission(Permission::Admin));
+        let mut no_roles = claims;
+        no_roles.as_object_mut().unwrap().remove("roles");
+        assert!(!extractor.extract(&no_roles).unwrap().has_permission(Permission::MCPUser));
     }
 }

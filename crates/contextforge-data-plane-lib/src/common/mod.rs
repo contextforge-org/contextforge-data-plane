@@ -64,17 +64,6 @@ impl TryFrom<cli_config::CliConfig> for Config {
         let downstream_transport_config = DownstreamTransportConfig::from(&value);
         let upstream_transport_config = UpstreamTransportConfig::from(&value);
         let jwks_config = JwksConfig::from(&value);
-        let principal_config = crate::authorization::PrincipalConfig {
-            user_claim: value.jwt_user_claim,
-            scopes_only: value.jwt_scopes_only,
-            scope_mapping: (value.jwt_admin_scopes.is_some() || value.jwt_mcp_user_scopes.is_some()).then(|| {
-                crate::authorization::ScopeMapping {
-                    admin: value.jwt_admin_scopes.clone().unwrap_or_default(),
-                    mcp_user: value.jwt_mcp_user_scopes.clone().unwrap_or_default(),
-                }
-            }),
-        };
-        principal_config.validate()?;
         let CliConfig {
             address,
             runtime_plugins_enabled,
@@ -87,7 +76,6 @@ impl TryFrom<cli_config::CliConfig> for Config {
         Ok(Self {
             address,
             jwks_config,
-            principal_config,
             observability_config,
             downstream_transport_config,
             upstream_transport_config,

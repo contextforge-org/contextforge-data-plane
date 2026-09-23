@@ -12,8 +12,7 @@ mod jwks;
 mod principal_extractor;
 
 pub use principal_extractor::{
-    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, Permission, PrincipalConfig,
-    PrincipalExtractor, ScopeMapping, UserClaim,
+    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, Permission, PrincipalExtractor,
 };
 
 pub fn get_authorization_service(
@@ -39,9 +38,7 @@ pub enum AuthenticationError {
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
 pub enum AuthorizationError {
-    #[error(
-        "JWT trust configuration requires a nonempty issuer, audiences, and RSA/EC algorithms; leeway must be at most 300 seconds"
-    )]
+    #[error("JWT trust configuration requires a nonempty issuer and audience")]
     InvalidTrustConfiguration,
     #[error("JWKS contains duplicate signing key IDs")]
     DuplicateKeyId,
