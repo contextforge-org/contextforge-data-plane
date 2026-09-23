@@ -68,7 +68,6 @@ cargo run -p contextforge-data-plane --features with_tools,plugins \
   --redis-port 6379 \
   --redis-mode plain-text \
   --jwks-url http://127.0.0.1:8001/contextforge-rs/admin/.well-known/jwks.json \
-  --jwt-issuer local-dev --jwt-audiences local-gateway \
   --token-verification-private-key assets/jwt.key \
   --upstream-connection-mode plain-text-or-tls \
   --runtime-plugins-enabled true \
@@ -108,7 +107,7 @@ Expect `{"status": "healthy"}` and a JWKS document containing a `keys` array.
 The token response is a raw JWT, stored in `TOKEN` without printing it. Tokens
 expire after one hour; repeat the token command to refresh. Both tenant and user
 path segments are required. The helper sets top-level `tenant_id` and `sub`
-claims, configured issuer/audiences, and `role: user`; the optional email does not select the user's Redis configuration.
+claims; the optional email does not select the user's Redis configuration.
 
 Keep the listener, JWKS, token, and MCP URLs on the same instance. If you use
 port `9090`, change all four together. Port `8080` belongs to the full Docker
@@ -244,8 +243,6 @@ then build and start the stack:
 
 ```bash
 export CONTEXTFORGE_DATA_PLANE_JWKS_URL=https://your-issuer.example/.well-known/jwks.json
-export CONTEXTFORGE_DATA_PLANE_JWT_ISSUER=https://your-issuer.example
-export CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES=your-gateway-audience
 make docker-prod
 make compose-up
 ```

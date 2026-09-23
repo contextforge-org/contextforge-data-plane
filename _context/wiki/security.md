@@ -18,35 +18,30 @@ user database. Configuration does not require a management API call per request,
 but verification can fetch keys from the trusted issuer's JWKS endpoint.
 
 The request path is Origin/header checks → JWT verification → principal
-extraction → MCPUser permission → user configuration → virtual-host check → RMCP validation →
+extraction → user configuration → virtual-host check → RMCP validation →
 published object route → backend call.
 
-- JWT verification requires `exp`, the configured issuer and audience, and an
-  explicitly allowed RSA/EC algorithm (`RS256` by default). `nbf` is validated
-  when present. HMAC and token-directed key URLs are not supported.
-- The default identity uses `sub`, or `woUserId` under an explicit profile.
-  Tenant aliases `woTenantId`, `tenant_id`, and `tenantId` must be nonempty
-  strings and agree. No tenant is inferred from teams or email. CEL handles
-  custom layouts through the same identity and permission checks.
-- `admin` grants Admin and MCPUser; `builder`/`user` grant MCPUser. Every MCP
-  request, including discovery/list requests, needs MCPUser before config lookup.
-  Unknown/missing roles grant nothing. Explicit scope mapping can restrict roles;
-  scope-only authorization requires explicit opt-in. See [Configuration](config.md#jwt-claims-validated-by-claims_layer).
+- JWT verification uses RSA/EC JWKS keys. HMAC secrets and the old public-key
+  CLI flag are not supported. `exp` and `nbf` are validated when present; no
+  fixed issuer/audience or mandatory expiration claim is enforced today.
+- The default extractor requires a string user ID (`sub`, `user_id`, or
+  `UserId`) and tenant ID (`tenantId` or `tenant_id`). The first present alias
+  wins and must have the right type. User IDs need not be emails. CEL can
+  define a custom mapping; see [Configuration](config.md#jwt-claims-validated-by-claims_layer).
 - The Redis/cache key currently contains **only the extracted user ID**, not
   the tenant. Identical user IDs in different tenants resolve to the same
   stored configuration. Tenant extraction alone is not an isolation boundary.
 - The virtual host and each targeted tool, resource, or prompt must exist in
   that user's published routing maps. Publishing a backend alone does not
   expose all its objects. The dataplane does not derive routes by prefix.
-- Object-level authorization still comes from published routing maps. CPEX
-  policy integration and tenant-aware keys in the
+- JWT scopes, teams, and compiled RBAC are not independently enforced on this
+  path. Stronger isolation and policy checks in the
   [target authorization model](mcp-capability-allocation.md#target-authorization-invariants)
-  remain future work.
-- There is no per-token revocation lookup. Keys are cached for five minutes;
-  refresh is serialized with a five-second cooldown. Expired cached keys never
-  authenticate during an outage. Known fresh keys remain usable. Removing a key
-  takes effect after refresh, expiry, or restart. Removing published user config
-  blocks access after its cache expires.
+  are proposed work, not current guarantees.
+- There is no per-token blocklist/revocation lookup. Keys are cached for five
+  minutes; removing a JWKS key is not immediate invalidation until refresh or
+  restart. A token without `exp` has no expiration enforced by this verifier.
+  Removing a user's published configuration blocks access after cache expiry.
 
 ## What Compromise Means
 

@@ -8,10 +8,8 @@ operation. There is no sticky-session requirement. Follow
 
 1. Route the configured `/contextforge-rs` prefix to the external dataplane and
    keep older clients and legacy SSE on Python routes.
-2. Configure `--jwks-url`, exact `--jwt-issuer`, and `--jwt-audiences`. Match
-   the principal and role/scope mapping to issued tokens and publisher IDs.
-   Tenant-aware persistent keys are still pending; this change alone does not
-   isolate tenants with colliding user IDs.
+2. Configure a reachable trusted `--jwks-url` and a principal mapping matching
+   the publisher's user IDs and tenant claims.
 3. Provide Redis connectivity and control-plane publication
    (`DATAPLANE_PUBLISHER=true` in the control-plane deployment). Restrict writes
    to trusted publishers; use TLS/mTLS across trust zones.
