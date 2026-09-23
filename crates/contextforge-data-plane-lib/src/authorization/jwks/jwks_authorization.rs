@@ -105,7 +105,7 @@ mod tests {
         for url in [
             "http://issuer.example/keys",
             "file:///keys",
-            "https://user:secret@issuer.example/keys",
+            "https://user:secret@issuer.example/keys", // pragma: allowlist secret (synthetic URL-rejection fixture)
             "https://issuer.example/keys#fragment",
         ] {
             assert!(parse_jwks_url(url.parse().unwrap()).is_err(), "{url}");
