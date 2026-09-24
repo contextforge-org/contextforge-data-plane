@@ -39,7 +39,7 @@ pub(super) struct Jwks {
 impl Jwks {
     fn validation(&self, alg: Algorithm) -> Validation {
         let mut validation = Validation::new(alg);
-        validation.set_required_spec_claims(&["exp", "iss", "aud"]);
+        validation.set_required_spec_claims(&["iss", "aud"]);
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&self.audiences);
         validation.validate_aud = self.validate_audience;
@@ -211,6 +211,9 @@ mod tests {
             json!({"iss":"mcpgateway", "aud":"mcpgateway-api", "exp":jsonwebtoken::get_current_timestamp()+3600});
         let signed = |claims: &Value, header: &Header| encode(header, claims, &signing_key()).unwrap();
         assert!(verifier.validate(&signed(&claims, &header), &header).await.is_some());
+        let mut without_expiry = claims.clone();
+        without_expiry.as_object_mut().unwrap().remove("exp");
+        assert!(verifier.validate(&signed(&without_expiry, &header), &header).await.is_some());
         let mut invalid = Vec::new();
         for (name, value) in
             [("iss", json!("other")), ("aud", json!("other")), ("exp", json!(1)), ("nbf", json!(9_999_999_999_u64))]
@@ -219,7 +222,7 @@ mod tests {
             modified[name] = value;
             invalid.push(modified);
         }
-        for name in ["iss", "aud", "exp"] {
+        for name in ["iss", "aud"] {
             let mut modified = claims.clone();
             modified.as_object_mut().unwrap().remove(name);
             invalid.push(modified);
