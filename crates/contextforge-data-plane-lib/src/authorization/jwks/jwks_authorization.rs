@@ -190,8 +190,7 @@ mod test {
     }
 
     static CRYPTO: Once = Once::new();
-    const RSA_PRIVATE_KEY: &[u8] = include_bytes!("../../../../../assets/jwt.key");
-    const RSA_PUBLIC_KEY: &[u8] = include_bytes!("../../../../../assets/jwt.key.pub");
+    const HMAC_SECRET: &[u8] = b"my-test-key-but-now-longer-than-32-bytes";
 
     fn now_epoch_seconds() -> u64 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Time went backwards").as_secs()
@@ -226,9 +225,9 @@ mod test {
         AuthorizationClaims::from(map)
     }
 
-    fn get_rsa_token_for_claims(claims: &AuthorizationClaims) -> String {
-        let key = EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY).expect("RSA test signing key");
-        let header = Header::new(Algorithm::RS256);
+    fn get_hmac_token_for_claims(claims: &AuthorizationClaims) -> String {
+        let key = EncodingKey::from_secret(HMAC_SECRET);
+        let header = Header::new(Algorithm::HS256);
         let claims = claims.value.clone();
         encode::<serde_json::Value>(&header, &claims, &key).expect("Expecting this to work")
     }
@@ -257,7 +256,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     #[allow(clippy::items_after_statements)]
     #[test_log::test]
-    async fn claim_test_valid_rsa() {
+    async fn claim_test_valid_hmac() {
         CRYPTO.call_once(|| {
             _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         });
@@ -266,10 +265,10 @@ mod test {
             Response::builder().status(StatusCode::OK).body(Body::empty()).expect("Expecting this to work")
         }
 
-        let token = get_rsa_token_for_claims(&active_test_claims());
+        let token = get_hmac_token_for_claims(&active_test_claims());
 
-        let decoding_key = DecodingKey::from_rsa_pem(RSA_PUBLIC_KEY).expect("RSA test verification key");
-        let verfication_key = VerificationKey::new(Some("RS256".to_owned()), decoding_key);
+        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
+        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
 
         let state = ContextForgeDataPlaneAppState {
             authorization_service: Arc::new(
@@ -304,10 +303,10 @@ mod test {
 
         let mut claims = active_test_claims();
         claims.clear("scopes");
-        let token = get_rsa_token_for_claims(&claims);
+        let token = get_hmac_token_for_claims(&claims);
 
-        let decoding_key = DecodingKey::from_rsa_pem(RSA_PUBLIC_KEY).expect("RSA test verification key");
-        let verfication_key = VerificationKey::new(Some("RS256".to_owned()), decoding_key);
+        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
+        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
         let state = ContextForgeDataPlaneAppState {
             authorization_service: Arc::new(
                 JwtAuthorizationService::from_keys(vec![verfication_key]).await.expect("this should work"),
@@ -353,10 +352,10 @@ mod test {
             .expect("should work"),
         );
 
-        let token = get_rsa_token_for_claims(&claims);
+        let token = get_hmac_token_for_claims(&claims);
 
-        let decoding_key = DecodingKey::from_rsa_pem(RSA_PUBLIC_KEY).expect("RSA test verification key");
-        let verfication_key = VerificationKey::new(Some("RS256".to_owned()), decoding_key);
+        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
+        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
 
         let state = ContextForgeDataPlaneAppState {
             authorization_service: Arc::new(
@@ -391,10 +390,10 @@ mod test {
 
         let mut claims = active_test_claims();
         claims.set("exp", 1000.into());
-        let token = get_rsa_token_for_claims(&claims);
+        let token = get_hmac_token_for_claims(&claims);
 
-        let decoding_key = DecodingKey::from_rsa_pem(RSA_PUBLIC_KEY).expect("RSA test verification key");
-        let verfication_key = VerificationKey::new(Some("RS256".to_owned()), decoding_key);
+        let decoding_key = DecodingKey::from_secret(HMAC_SECRET);
+        let verfication_key = VerificationKey::new(Some("HS256".to_owned()), decoding_key);
 
         let state = ContextForgeDataPlaneAppState {
             authorization_service: Arc::new(

@@ -37,8 +37,8 @@ pub(super) struct Jwks {
 }
 
 impl Jwks {
-    fn validation(&self) -> Validation {
-        let mut validation = Validation::new(Algorithm::RS256);
+    fn validation(&self, alg: Algorithm) -> Validation {
+        let mut validation = Validation::new(alg);
         validation.set_required_spec_claims(&["exp", "iss", "aud"]);
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&self.audiences);
@@ -55,14 +55,14 @@ impl Jwks {
             if let Some(keys) = cache.peek(JWKS_CACHE_KEY)
                 && keys.iter().any(|key| key.matches(header))
             {
-                return Self::validate_with_keys(keys, token, header, &self.validation());
+                return Self::validate_with_keys(keys, token, header, &self.validation(header.alg));
             }
         }
 
         match fetch_jwks(&self.client, &self.url).await {
             Ok(keys) => {
                 let key_count = keys.len();
-                let claims = Self::validate_with_keys(&keys, token, header, &self.validation());
+                let claims = Self::validate_with_keys(&keys, token, header, &self.validation(header.alg));
                 self.cache.write().await.insert(JWKS_CACHE_KEY.to_owned(), keys);
                 tracing::info!("validate: SaaS JWKS cache refreshed {key_count}");
 
@@ -227,9 +227,9 @@ mod tests {
         for claims in invalid {
             assert!(verifier.validate(&signed(&claims, &header), &header).await.is_none());
         }
-        let mut wrong_algorithm = header.clone();
-        wrong_algorithm.alg = Algorithm::RS384;
-        assert!(verifier.validate(&signed(&claims, &wrong_algorithm), &wrong_algorithm).await.is_none());
+        let mut another_rsa_algorithm = header.clone();
+        another_rsa_algorithm.alg = Algorithm::RS384;
+        assert!(verifier.validate(&signed(&claims, &another_rsa_algorithm), &another_rsa_algorithm).await.is_some());
     }
 
     #[test]
