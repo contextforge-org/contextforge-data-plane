@@ -10,8 +10,7 @@ in the wiki under [`_context/wiki/`](_context/wiki/index.md).
 
 ## Quick Start
 
-Build the production image and start the supported control-plane + data-plane
-test stack:
+Build the production image and start the default data-plane test stack:
 
 ```bash
 export CONTEXTFORGE_DATA_PLANE_JWKS_URL=https://your-issuer.example/.well-known/jwks.json
@@ -19,19 +18,34 @@ make docker-prod
 make compose-up
 ```
 
-Replace the example JWKS URL with the HTTPS endpoint for the issuer of your
-control-plane tokens. The production image includes the plugin factories and
-`/contextforge-rs/health`; it does not include `with_tools`. That feature is for
-testing only and enables unauthenticated token, JWKS, and config helpers.
+The default stack omits the Python control plane. `register_fast_time` runs the
+`cf-integration` helper fixture command after Redis and Fast Time are healthy;
+it discovers the backend catalog and publishes the virtual-host routing snapshot
+directly to Redis for the Rust dataplane. The default backend URL is
+`http://fast_time_server:8880/mcp`, the virtual server ID is
+`b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8`, and the protocol version is `2026-07-28`.
+Override `CF_FAST_TIME_SERVER_ID`, `CF_FAST_TIME_BACKEND_URL`, or
+`CF_HELPERS_IMAGE` when needed.
 
-The stack uses the current `fast_time_server` backend and exercises config
-publication through the external ContextForge control plane. See
-[getting-started.md](_context/wiki/getting-started.md) for the complete smoke
-test, then stop it with:
+To exercise control-plane publication as well, opt into its service:
+
+```bash
+SERVICES="nginx gateway redis postgres pgbouncer migration control-plane fast_time_server register_fast_time" \
+  make compose-up
+```
+
+The production image includes the plugin factories and
+`/contextforge-rs/health`; it does not include `with_tools`. That feature is for
+testing only and enables unauthenticated token, JWKS, and config helpers. See
+[getting-started.md](_context/wiki/getting-started.md) for the full-stack smoke
+test and then stop the default stack with:
 
 ```bash
 make compose-down
 ```
+
+If you enabled the optional services, pass the same `SERVICES` value to
+`compose-down`.
 
 ## Run the Binary from Cargo
 

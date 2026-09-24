@@ -233,36 +233,51 @@ docker compose -f docker/docker-compose-local.yaml down
 
 ## Full Docker Stack
 
-The full Compose topology adds nginx, the Python control plane/built-in
-dataplane, Postgres, Redis, and automatic registration of a Fast Time backend.
-It requires a configured token issuer and compatible control-plane publisher;
-the local Cargo workflow above supplies a self-contained development fixture.
-
-Set the HTTPS endpoint serving the signing keys for your control-plane tokens,
-then build and start the stack:
+The default `make compose-up` topology starts nginx, the Rust dataplane,
+Postgres, Redis, PgBouncer, the migration job, Fast Time, and a one-shot
+`register_fast_time` helper. After Redis and Fast Time are healthy, the helper
+runs `cf-integration __helper fixture` to discover the backend catalog and
+publish the virtual-host routing snapshot directly to Redis. It does not
+require the Python control plane.
 
 ```bash
-export CONTEXTFORGE_DATA_PLANE_JWKS_URL=https://your-issuer.example/.well-known/jwks.json
 make docker-prod
 make compose-up
 ```
 
-Replace the example URL with your issuer's reachable JWKS endpoint. Compose
-passes it to the Rust service. The production image includes plugin factories
-and health, and excludes testing-only `with_tools` helpers and signing-key mounts.
-Obtain bearer tokens through the control plane or configured identity provider.
+The default seed uses:
 
-Check that the publisher emits the backend protocol field and explicit object
-routes with keys matching the extracted user ID. Match resource reservations
-to the Docker host, and account for publisher and Rust-cache delay when verifying
-route changes. See [Deployment](deployment.md#builds-and-images).
+| Setting | Value |
+| --- | --- |
+| Virtual server ID | `b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8` |
+| Backend URL | `http://fast_time_server:8880/mcp` |
+| Protocol version | `2026-07-28` |
+
+Override `CF_FAST_TIME_SERVER_ID`, `CF_FAST_TIME_BACKEND_URL`, or
+`CF_HELPERS_IMAGE` for another fixture or helper image. The helper image creates
+a local `admin@example.com` subject when `MCP_CONFORMANCE_TOKEN` is not
+provided; pass that environment variable when the route must be published for
+another token subject.
+
+To exercise control-plane publication as well, include its service explicitly:
+
+```bash
+SERVICES="nginx gateway redis postgres pgbouncer migration control-plane fast_time_server register_fast_time" \
+  make compose-up
+```
+
+The production image includes plugin factories and health, and excludes
+testing-only `with_tools` helpers and signing-key mounts. Obtain bearer tokens
+through the configured issuer; the seeded Redis route is keyed by the token
+subject used by the helper.
 
 The reference nginx listener is `http://localhost:8080`. External MCP uses
 `/contextforge-rs/servers/{virtual_host_id}/mcp`, and health is at `/health` or
-`/contextforge-rs/health`. Other MCP paths reach Python. `fast_time_server` is a
-sample backend, not a gateway dependency.
+`/contextforge-rs/health`. `fast_time_server` is a sample backend, not a
+gateway dependency.
 
-Stop the stack with `make compose-down`; volumes are kept.
+Stop the default stack with `make compose-down`; if the optional services were
+enabled, pass the same `SERVICES` value to `compose-down`. Volumes are kept.
 
 ## cf-integration Conformance
 
