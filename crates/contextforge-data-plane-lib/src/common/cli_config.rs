@@ -17,14 +17,6 @@ pub struct CliConfig {
     #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWKS_CA_PATH")]
     pub jwks_ca_cert_path: Option<PathBuf>,
 
-    /// Exact trusted token issuer; never discovered from the incoming token.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_ISSUER")]
-    pub jwt_issuer: String,
-
-    /// Accepted audiences (comma-separated); at least one must match.
-    #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES", value_delimiter = ',', required = true)]
-    pub jwt_audiences: Vec<String>,
-
     #[arg(long, env = "CONTEXTFORGE_DATA_PLANE_ENABLE_OPEN_TELEMETRY")]
     pub enable_open_telemetry: Option<bool>,
 

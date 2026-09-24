@@ -76,8 +76,6 @@ services:
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
       # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
       - CONTEXTFORGE_DATA_PLANE_JWKS_URL
-      - CONTEXTFORGE_DATA_PLANE_JWT_ISSUER
-      - CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES
       - RUST_LOG=debug
 
     sysctls:
@@ -138,8 +136,6 @@ services:
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
       # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
       - CONTEXTFORGE_DATA_PLANE_JWKS_URL
-      - CONTEXTFORGE_DATA_PLANE_JWT_ISSUER
-      - CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES
       - RUST_LOG=debug
 
     sysctls:
@@ -177,8 +173,6 @@ services:
       - CONTEXTFORGE_DATA_PLANE_UPSTREAM_CONNECTION_MODE=plain-text-or-tls
       # Set the HTTPS JWKS endpoint for the token issuer in the host environment.
       - CONTEXTFORGE_DATA_PLANE_JWKS_URL
-      - CONTEXTFORGE_DATA_PLANE_JWT_ISSUER
-      - CONTEXTFORGE_DATA_PLANE_JWT_AUDIENCES
       - RUST_LOG=debug
 
     sysctls:

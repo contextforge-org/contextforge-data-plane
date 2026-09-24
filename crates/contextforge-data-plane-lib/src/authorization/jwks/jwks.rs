@@ -24,8 +24,6 @@ const JWKS_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 pub(super) struct Jwks {
     client: reqwest::Client,
     url: Url,
-    issuer: String,
-    audiences: Vec<String>,
     #[builder(default = RwLock::new(LruCache::with_expiry_duration(JWKS_CACHE_TTL)))]
     cache: RwLock<LruCache<String, Vec<VerificationKey>>>,
     #[builder(default = false)]
@@ -40,8 +38,6 @@ impl Jwks {
     fn validation(&self, alg: Algorithm) -> Validation {
         let mut validation = Validation::new(alg);
         validation.required_spec_claims.clear();
-        validation.set_issuer(&[&self.issuer]);
-        validation.set_audience(&self.audiences);
         validation.validate_aud = self.validate_audience;
         validation.validate_exp = self.validate_expiry;
         validation.validate_nbf = self.validate_not_before;
@@ -177,7 +173,7 @@ pub(super) fn validated_json_web_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{JwksConfig, get_authorization_service};
+    use crate::JwksConfig;
     use jsonwebtoken::{EncodingKey, encode};
     use serde_json::json;
 
@@ -192,14 +188,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verifies_signed_tokens_and_requires_trusted_claims() {
+    async fn verifies_signed_tokens_with_optional_claims() {
         let config = JwksConfig::default();
-        let verifier = Jwks::builder()
-            .client(reqwest::Client::new())
-            .url(config.url)
-            .issuer(config.issuer)
-            .audiences(config.audiences)
-            .build();
+        let verifier = Jwks::builder().client(reqwest::Client::new()).url(config.url).build();
         verifier
             .cache
             .write()
@@ -214,11 +205,13 @@ mod tests {
         let mut without_expiry = claims.clone();
         without_expiry.as_object_mut().unwrap().remove("exp");
         assert!(verifier.validate(&signed(&without_expiry, &header), &header).await.is_some());
-        let mut other_audience = claims.clone();
-        other_audience["aud"] = json!("other");
-        assert!(verifier.validate(&signed(&other_audience, &header), &header).await.is_some());
+        for name in ["iss", "aud"] {
+            let mut modified = claims.clone();
+            modified[name] = json!("other");
+            assert!(verifier.validate(&signed(&modified, &header), &header).await.is_some());
+        }
         let mut invalid = Vec::new();
-        for (name, value) in [("iss", json!("other")), ("exp", json!(1)), ("nbf", json!(9_999_999_999_u64))] {
+        for (name, value) in [("exp", json!(1)), ("nbf", json!(9_999_999_999_u64))] {
             let mut modified = claims.clone();
             modified[name] = value;
             invalid.push(modified);
@@ -234,17 +227,5 @@ mod tests {
         let mut another_rsa_algorithm = header.clone();
         another_rsa_algorithm.alg = Algorithm::RS384;
         assert!(verifier.validate(&signed(&claims, &another_rsa_algorithm), &another_rsa_algorithm).await.is_some());
-    }
-
-    #[test]
-    fn requires_explicit_issuer_and_audience() {
-        let config = JwksConfig::default();
-        for config in [
-            JwksConfig { issuer: String::new(), ..config.clone() },
-            JwksConfig { audiences: vec![], ..config.clone() },
-            JwksConfig { audiences: vec![String::new()], ..config },
-        ] {
-            assert!(get_authorization_service(&config).is_err());
-        }
     }
 }

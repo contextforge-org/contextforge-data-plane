@@ -24,12 +24,7 @@ pub enum Permission {
 pub fn get_authorization_service(
     config: &JwksConfig,
 ) -> Result<Arc<dyn AuthorizationService + Send + Sync>, AuthorizationError> {
-    let service = jwks::JwtAuthorizationService::from_jwks_url(
-        config.url.clone(),
-        config.ca_cert_path.as_ref(),
-        config.issuer.clone(),
-        config.audiences.clone(),
-    )?;
+    let service = jwks::JwtAuthorizationService::from_jwks_url(config.url.clone(), config.ca_cert_path.as_ref())?;
     Ok(Arc::new(service) as Arc<dyn AuthorizationService + Send + Sync>)
 }
 
@@ -47,8 +42,6 @@ pub enum AuthenticationError {
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
 pub enum AuthorizationError {
-    #[error("JWT trust configuration requires a nonempty issuer and audience")]
-    InvalidTrustConfiguration,
     #[error("SaaS JWKS contains no supported signing keys")]
     NoSupportedKeys,
     #[error("SaaS JWKS is invalid")]

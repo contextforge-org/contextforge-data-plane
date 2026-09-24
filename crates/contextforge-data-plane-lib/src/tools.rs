@@ -96,9 +96,9 @@ pub async fn get_token(
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Time went backwards").as_secs();
 
     let map = json!( {
-        "iss": state.config.jwks_config.issuer,
+        "iss": "contexforge-dataplane",
         "sub": user_id.clone(),
-        "aud": state.config.jwks_config.audiences,
+        "aud": "contexforge-dataplane-audience",
         "role": "user",
         "woUserId": user_id.clone(),
         "exp": now + Duration::from_hours(1).as_secs(),

@@ -146,18 +146,11 @@ impl From<&CliConfig> for UpstreamTransportConfig {
 pub struct JwksConfig {
     pub url: url::Url,
     pub ca_cert_path: Option<PathBuf>,
-    pub issuer: String,
-    pub audiences: Vec<String>,
 }
 impl From<&CliConfig> for JwksConfig {
     fn from(value: &CliConfig) -> Self {
         let CliConfig { jwks_url, jwks_ca_cert_path, .. } = value.clone();
-        Self {
-            url: jwks_url,
-            ca_cert_path: jwks_ca_cert_path,
-            issuer: value.jwt_issuer.clone(),
-            audiences: value.jwt_audiences.clone(),
-        }
+        Self { url: jwks_url, ca_cert_path: jwks_ca_cert_path }
     }
 }
 
@@ -361,10 +354,6 @@ mod tests {
     fn observability_config_is_derived_from_cli_config() {
         let args = vec![
             "contextforge-data-plane",
-            "--jwt-issuer",
-            "mcpgateway",
-            "--jwt-audiences",
-            "mcpgateway-api",
             "--jwks-url",
             "http://127.0.0.1:8080/",
             "--redis-address",
@@ -411,12 +400,7 @@ mod tests {
 
     impl Default for super::JwksConfig {
         fn default() -> Self {
-            Self {
-                url: "http://127.0.0.1:8080/".parse().expect("should work"),
-                ca_cert_path: None,
-                issuer: "mcpgateway".to_owned(),
-                audiences: vec!["mcpgateway-api".to_owned()],
-            }
+            Self { url: "http://127.0.0.1:8080/".parse().expect("should work"), ca_cert_path: None }
         }
     }
 

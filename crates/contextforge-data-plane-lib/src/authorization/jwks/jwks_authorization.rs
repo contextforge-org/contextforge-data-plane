@@ -18,15 +18,7 @@ pub struct JwtAuthorizationService {
 }
 
 impl JwtAuthorizationService {
-    pub fn from_jwks_url(
-        jwks_url: Url,
-        ca_cert_path: Option<&PathBuf>,
-        issuer: String,
-        audiences: Vec<String>,
-    ) -> Result<Self, AuthorizationError> {
-        if issuer.trim().is_empty() || audiences.is_empty() || audiences.iter().any(|aud| aud.trim().is_empty()) {
-            return Err(AuthorizationError::InvalidTrustConfiguration);
-        }
+    pub fn from_jwks_url(jwks_url: Url, ca_cert_path: Option<&PathBuf>) -> Result<Self, AuthorizationError> {
         let url = parse_jwks_url(jwks_url)?;
         let mut client = reqwest::Client::builder()
             .tls_backend_rustls()
@@ -39,7 +31,7 @@ impl JwtAuthorizationService {
             client = client.tls_certs_only(load_ca_certificates(ca_cert_path)?);
         }
         let client = client.build().map_err(AuthorizationError::JwksRequest)?;
-        Ok(Self { jwks: Jwks::builder().client(client).url(url).issuer(issuer).audiences(audiences).build() })
+        Ok(Self { jwks: Jwks::builder().client(client).url(url).build() })
     }
 
     async fn authorize_token(&self, token: &str) -> Option<AuthorizationClaims> {
@@ -177,15 +169,7 @@ mod test {
             guard.insert(JWKS_CACHE_KEY.to_owned(), verification_keys);
             drop(guard);
 
-            Ok(Self {
-                jwks: Jwks::builder()
-                    .cache(cache)
-                    .client(client)
-                    .url(url)
-                    .issuer(GATEWAY_ISSUER.to_owned())
-                    .audiences(vec![GATEWAY_AUDIENCE.to_owned()])
-                    .build(),
-            })
+            Ok(Self { jwks: Jwks::builder().cache(cache).client(client).url(url).build() })
         }
     }
 

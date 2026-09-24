@@ -48,12 +48,7 @@ pub(crate) use user_config_store::MemoryUserConfigStore;
 pub fn create_default_config() -> Config {
     Config {
         address: None,
-        jwks_config: JwksConfig {
-            url: "http://127.0.0.1:8080/".parse().expect("should work"),
-            ca_cert_path: None,
-            issuer: "mcpgateway".to_owned(),
-            audiences: vec!["mcpgateway-api".to_owned()],
-        },
+        jwks_config: JwksConfig { url: "http://127.0.0.1:8080/".parse().expect("should work"), ca_cert_path: None },
 
         mcp_standard_header_max_count: 10,
         mcp_standard_header_max_value_bytes: 4096,
