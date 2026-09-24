@@ -58,8 +58,8 @@ where
             let maybe_authorization_claims = request.extensions().get::<AuthorizationClaims>();
             let Some(Ok(authorized_principal)) = maybe_authorization_claims.map(|authorization_claims| {
                 principal_extractor
-                    .extract(authorization_claims.as_value())
-                    .inspect_err(|_| debug!("principal_extract - invalid identity or permission claims"))
+                    .extract(&authorization_claims.into())
+                    .inspect_err(|e| debug!("Can't extract the principal {e:?}"))
             }) else {
                 return Ok(unauthorized_response("Invalid token. Unable to extract the principal from claims"));
             };

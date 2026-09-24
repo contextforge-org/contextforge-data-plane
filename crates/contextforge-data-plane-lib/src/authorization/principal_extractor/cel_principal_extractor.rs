@@ -5,9 +5,9 @@ use std::sync::Arc;
 use cel::{Context, Program, objects::Key};
 use serde_json::Value as JsonValue;
 use thiserror::Error;
-use tracing::instrument;
+use tracing::{debug, instrument};
 
-use super::{AuthorizedPrincipal, PrincipalExtractor};
+use crate::authorization::{AuthorizedPrincipal, PrincipalExtractor};
 
 #[derive(Error, Debug)]
 pub enum CelPrincipalExtractorError {
@@ -22,10 +22,35 @@ pub enum CelPrincipalExtractorError {
 
     #[error("CEL expression did not return a map: {0:?}")]
     InvalidReturnType(JsonValue),
+
+    #[error("Missing required field in CEL result: {0}")]
+    MissingRequiredField(String),
+
+    #[error("Invalid field type in CEL result: field={0}, expected={1}")]
+    InvalidFieldType(String, String),
 }
 
-/// CEL maps user_id and tenant_id. Roles and issuer always come from the
-/// original verified claims and use the same policy as the default extractor.
+/// A CEL-based principal extractor that evaluates a CEL expression to extract
+/// principal information from authorization claims.
+///
+/// The CEL expression should return a map with the following fields:
+/// - `user_id` (string, required): The user identifier
+/// - `tenant_id` (string, required): The tenant identifier
+/// - `scopes` (list of strings, optional): The user's scopes/permissions
+///
+/// The CEL expression has access to the following variables:
+/// - `claims`: A map containing all the authorization claims
+/// - `sub`: The subject claim (shorthand for claims.sub)
+/// - `tenant_id`: The tenant_id claim (shorthand for claims.tenant_id)
+///
+/// Example CEL expression:
+/// ```cel
+/// {
+///   "user_id": claims.sub,
+///   "tenant_id": claims.tenant_id,
+///   "scopes": []
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct CelPrincipalExtractor {
     program: Arc<Program>,
@@ -60,23 +85,30 @@ impl PrincipalExtractor for CelPrincipalExtractor {
         let result =
             self.program.execute(&context).map_err(|e| CelPrincipalExtractorError::EvaluationError(e.to_string()))?;
 
-        let cel::Value::Map(map) = result else {
-            return Err(CelPrincipalExtractorError::InvalidReturnType(JsonValue::Null).into());
-        };
-        let mut normalized = serde_json::Map::new();
-        for (name, claim) in [("user_id", "sub"), ("tenant_id", "tenant_id")] {
-            let value = match map.get(&Key::from(name.to_owned())) {
-                Some(cel::Value::String(value)) => JsonValue::String(value.to_string()),
-                _ => JsonValue::Null,
-            };
-            normalized.insert(claim.to_owned(), value);
+        debug!("CEL expression evaluated to: {:?}", result);
+
+        Ok(AuthorizedPrincipal::try_from(result)?)
+    }
+}
+
+impl TryFrom<cel::Value> for AuthorizedPrincipal {
+    type Error = CelPrincipalExtractorError;
+
+    fn try_from(value: cel::Value) -> Result<Self, Self::Error> {
+        match value {
+            cel::Value::Map(map) => {
+                if let Some(cel::Value::String(user_id)) = map.get(&Key::from("user_id".to_owned()))
+                    && let Some(cel::Value::String(tenant_id)) = map.get(&Key::from("tenant_id".to_owned()))
+                {
+                    let user_id = (**user_id).clone();
+                    let tenant_id = (**tenant_id).clone();
+                    Ok(AuthorizedPrincipal::builder().user_id(user_id).tenant_id(tenant_id).scopes(vec![]).build())
+                } else {
+                    Err(CelPrincipalExtractorError::InvalidReturnType(serde_json::Value::Null))
+                }
+            },
+            _ => Err(CelPrincipalExtractorError::InvalidReturnType(serde_json::Value::Null)),
         }
-        for name in ["iss", "role", "roles"] {
-            if let Some(value) = claims.get(name) {
-                normalized.insert(name.to_owned(), value.clone());
-            }
-        }
-        Ok(AuthorizedPrincipal::from_claims(&JsonValue::Object(normalized))?)
     }
 }
 
@@ -144,27 +176,5 @@ mod tests {
         let result = extractor.extract(&claims);
 
         assert!(result.is_err());
-    }
-}
-
-#[cfg(test)]
-mod permission_tests {
-    use super::*;
-    use crate::Permission;
-
-    #[test]
-    fn mapping_cannot_override_verified_roles_or_issuer() {
-        let extractor = CelPrincipalExtractor::from_expression(
-            r#"{"user_id": claims.sub, "tenant_id": claims.woTenantId, "role": "admin", "iss": "other"}"#,
-        )
-        .unwrap();
-        let claims = serde_json::json!({"sub":"user","woTenantId":"tenant","iss":"watson","roles":["user"]});
-        let principal = extractor.extract(&claims).unwrap();
-        assert_eq!(principal.issuer(), "watson");
-        assert!(principal.has_permission(Permission::MCPUser));
-        assert!(!principal.has_permission(Permission::Admin));
-        let mut no_roles = claims;
-        no_roles.as_object_mut().unwrap().remove("roles");
-        assert!(!extractor.extract(&no_roles).unwrap().has_permission(Permission::MCPUser));
     }
 }

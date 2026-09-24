@@ -12,8 +12,14 @@ mod jwks;
 mod principal_extractor;
 
 pub use principal_extractor::{
-    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, Permission, PrincipalExtractor,
+    AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, PrincipalExtractor,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Permission {
+    Admin,
+    MCPUser,
+}
 
 pub fn get_authorization_service(
     config: &JwksConfig,
