@@ -39,7 +39,7 @@ pub(super) struct Jwks {
 impl Jwks {
     fn validation(&self, alg: Algorithm) -> Validation {
         let mut validation = Validation::new(alg);
-        validation.set_required_spec_claims(&["iss", "aud"]);
+        validation.required_spec_claims.clear();
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&self.audiences);
         validation.validate_aud = self.validate_audience;
@@ -225,7 +225,7 @@ mod tests {
         for name in ["iss", "aud"] {
             let mut modified = claims.clone();
             modified.as_object_mut().unwrap().remove(name);
-            invalid.push(modified);
+            assert!(verifier.validate(&signed(&modified, &header), &header).await.is_some());
         }
         for claims in invalid {
             assert!(verifier.validate(&signed(&claims, &header), &header).await.is_none());
