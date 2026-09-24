@@ -61,10 +61,7 @@ impl AlwaysAllowAuthorizatioService {
 
 #[async_trait]
 impl AuthorizationService for AlwaysAllowAuthorizatioService {
-    async fn authorize(
-        &self,
-        _: &HeaderValue,
-    ) -> Result<AuthorizationClaims, contextforge_data_plane_lib::AuthenticationError> {
-        Ok(AuthorizationClaims::from(default_claims(&self.user)))
+    async fn authorize(&self, _: &HeaderValue) -> Option<AuthorizationClaims> {
+        Some(AuthorizationClaims::from(default_claims(&self.user)))
     }
 }

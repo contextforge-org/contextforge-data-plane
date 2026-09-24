@@ -208,8 +208,8 @@ mod tests {
 
     #[async_trait]
     impl AuthorizationService for Noop {
-        async fn authorize(&self, _: &HeaderValue) -> Result<AuthorizationClaims, crate::AuthenticationError> {
-            Err(crate::AuthenticationError::InvalidToken)
+        async fn authorize(&self, _: &HeaderValue) -> Option<AuthorizationClaims> {
+            None
         }
     }
 

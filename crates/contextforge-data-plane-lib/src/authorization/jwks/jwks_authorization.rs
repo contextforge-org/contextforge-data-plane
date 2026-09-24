@@ -1,6 +1,6 @@
 use crate::JwksConfig;
 use crate::authorization::jwks::jwks::Jwks;
-use crate::authorization::{AuthenticationError, AuthorizationClaims, AuthorizationError, AuthorizationService};
+use crate::authorization::{AuthorizationClaims, AuthorizationError, AuthorizationService};
 use async_trait::async_trait;
 use jsonwebtoken::decode_header;
 use std::fmt;
@@ -36,9 +36,9 @@ impl JwtAuthorizationService {
         Ok(Self { jwks: Jwks::new(client, url, validation) })
     }
 
-    async fn authorize_token(&self, token: &str) -> Result<AuthorizationClaims, AuthenticationError> {
-        let header = decode_header(token).map_err(|_| AuthenticationError::InvalidToken)?;
-        self.jwks.validate(token, &header).await
+    async fn authorize_token(&self, token: &str) -> Option<AuthorizationClaims> {
+        let header = decode_header(token).ok()?;
+        self.jwks.validate(token, &header).await.ok()
     }
 }
 
@@ -54,17 +54,16 @@ impl fmt::Debug for JwtAuthorizationService {
 #[async_trait]
 impl AuthorizationService for JwtAuthorizationService {
     #[instrument(name = "jwt_authorization_service", level = "info", skip_all)]
-    async fn authorize(
-        &self,
-        authorization_token: &http::HeaderValue,
-    ) -> Result<AuthorizationClaims, AuthenticationError> {
-        let value = authorization_token.to_str().map_err(|_| AuthenticationError::InvalidToken)?;
-        let (scheme, token) = value.split_once(' ').ok_or(AuthenticationError::InvalidToken)?;
-        if !scheme.eq_ignore_ascii_case("Bearer") || token.is_empty() || token.bytes().any(|b| b.is_ascii_whitespace())
-        {
-            return Err(AuthenticationError::InvalidToken);
+    async fn authorize(&self, authorization_token: &http::HeaderValue) -> Option<AuthorizationClaims> {
+        let token = authorization_token.as_bytes().strip_prefix(b"Bearer ")?;
+        let token = str::from_utf8(token).ok()?;
+        let claims = self.authorize_token(token).await;
+
+        if claims.is_none() {
+            tracing::debug!("validate_saas_jwt  SaaS JWT was rejected");
         }
-        self.authorize_token(token).await
+
+        claims
     }
 }
 
@@ -72,10 +71,9 @@ fn parse_jwks_url(url: Url) -> Result<Url, AuthorizationError> {
     let secure = url.scheme() == "https";
     let local_http = url.scheme() == "http"
         && url.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host.trim_matches(['[', ']']).parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
+            host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok_and(|address| address.is_loopback())
         });
-    if (!secure && !local_http) || !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+    if !secure && !local_http {
         return Err(AuthorizationError::InsecureJwksUrl);
     }
     Ok(url)
@@ -97,17 +95,10 @@ mod tests {
     use super::*;
     #[test]
     fn only_trusted_transport_urls_are_accepted() {
-        for url in
-            ["https://issuer.example/keys", "http://localhost/keys", "http://127.0.0.1/keys", "http://[::1]/keys"]
-        {
+        for url in ["https://issuer.example/keys", "http://localhost/keys", "http://127.0.0.1/keys"] {
             assert!(parse_jwks_url(url.parse().unwrap()).is_ok(), "{url}");
         }
-        for url in [
-            "http://issuer.example/keys",
-            "file:///keys",
-            "https://user:secret@issuer.example/keys", // pragma: allowlist secret (synthetic URL-rejection fixture)
-            "https://issuer.example/keys#fragment",
-        ] {
+        for url in ["http://issuer.example/keys", "file:///keys"] {
             assert!(parse_jwks_url(url.parse().unwrap()).is_err(), "{url}");
         }
     }

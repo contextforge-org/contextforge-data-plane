@@ -30,7 +30,7 @@ pub fn get_authorization_service(
 
 #[async_trait]
 pub trait AuthorizationService: std::fmt::Debug {
-    async fn authorize(&self, authorization_token: &HeaderValue) -> Result<AuthorizationClaims, AuthenticationError>;
+    async fn authorize(&self, authorization_token: &HeaderValue) -> Option<AuthorizationClaims>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -55,7 +55,7 @@ pub enum AuthorizationError {
     #[error("SaaS JWKS is invalid")]
     InvalidKey(#[source] jsonwebtoken::errors::Error),
 
-    #[error("JWKS URL must use HTTPS (HTTP is allowed only for loopback testing), without credentials or fragments")]
+    #[error("MCPOPS_JWKS_URL must use HTTPS (HTTP is allowed only for loopback testing)")]
     InsecureJwksUrl,
     #[error("unable to retrieve SaaS JWKS")]
     JwksRequest(#[source] reqwest::Error),
