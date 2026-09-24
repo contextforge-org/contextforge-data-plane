@@ -28,7 +28,7 @@ pub(super) struct Jwks {
     audiences: Vec<String>,
     #[builder(default = RwLock::new(LruCache::with_expiry_duration(JWKS_CACHE_TTL)))]
     cache: RwLock<LruCache<String, Vec<VerificationKey>>>,
-    #[builder(default = true)]
+    #[builder(default = false)]
     validate_audience: bool,
     #[builder(default = true)]
     validate_expiry: bool,
@@ -214,10 +214,11 @@ mod tests {
         let mut without_expiry = claims.clone();
         without_expiry.as_object_mut().unwrap().remove("exp");
         assert!(verifier.validate(&signed(&without_expiry, &header), &header).await.is_some());
+        let mut other_audience = claims.clone();
+        other_audience["aud"] = json!("other");
+        assert!(verifier.validate(&signed(&other_audience, &header), &header).await.is_some());
         let mut invalid = Vec::new();
-        for (name, value) in
-            [("iss", json!("other")), ("aud", json!("other")), ("exp", json!(1)), ("nbf", json!(9_999_999_999_u64))]
-        {
+        for (name, value) in [("iss", json!("other")), ("exp", json!(1)), ("nbf", json!(9_999_999_999_u64))] {
             let mut modified = claims.clone();
             modified[name] = value;
             invalid.push(modified);
