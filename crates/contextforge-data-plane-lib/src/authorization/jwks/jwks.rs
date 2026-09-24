@@ -2,127 +2,133 @@ use std::time::Duration;
 
 use futures::StreamExt as _;
 use jsonwebtoken::{
-    Algorithm, DecodingKey, Header, Validation, decode,
+    Algorithm, AlgorithmFamily, DecodingKey, Header, Validation, decode,
     jwk::{Jwk, JwkSet, KeyOperations, PublicKeyUse},
 };
 use lru_time_cache::LruCache;
+
 use reqwest::Url;
 use serde_json::Value;
 use tokio::sync::RwLock;
+use tracing::debug;
+use typed_builder::TypedBuilder;
 
-use crate::{
-    JwksConfig,
-    authorization::{AuthenticationError, AuthorizationClaims, AuthorizationError},
-};
+use crate::authorization::{AuthorizationClaims, AuthorizationError};
 
-const JWKS_CACHE_TTL: Duration = Duration::from_mins(5);
-const JWKS_CACHE_KEY: &str = "jwks";
+pub const JWKS_CACHE_TTL: Duration = Duration::from_mins(5);
+pub const JWKS_CACHE_KEY: &str = "jwks";
+
 const JWKS_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
+#[derive(TypedBuilder)]
 pub(super) struct Jwks {
     client: reqwest::Client,
     url: Url,
-    validation: Validation,
+    issuer: String,
+    audiences: Vec<String>,
+    #[builder(default = RwLock::new(LruCache::with_expiry_duration(JWKS_CACHE_TTL)))]
     cache: RwLock<LruCache<String, Vec<VerificationKey>>>,
+    #[builder(default = true)]
+    validate_audience: bool,
+    #[builder(default = true)]
+    validate_expiry: bool,
+    #[builder(default = true)]
+    validate_not_before: bool,
 }
 
 impl Jwks {
-    pub fn new(client: reqwest::Client, url: Url, validation: Validation) -> Self {
-        Self { client, url, validation, cache: RwLock::new(LruCache::with_expiry_duration(JWKS_CACHE_TTL)) }
-    }
-
-    pub fn validation(config: &JwksConfig) -> Result<Validation, AuthorizationError> {
-        if config.issuer.trim().is_empty()
-            || config.audiences.is_empty()
-            || config.audiences.iter().any(|aud| aud.trim().is_empty())
-        {
-            return Err(AuthorizationError::InvalidTrustConfiguration);
-        }
+    fn validation(&self) -> Validation {
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_required_spec_claims(&["exp", "iss", "aud"]);
-        validation.set_issuer(&[&config.issuer]);
-        validation.set_audience(&config.audiences);
-        validation.validate_nbf = true;
-        validation.leeway = 30;
-        Ok(validation)
+        validation.set_issuer(&[&self.issuer]);
+        validation.set_audience(&self.audiences);
+        validation.validate_aud = self.validate_audience;
+        validation.validate_exp = self.validate_expiry;
+        validation.validate_nbf = self.validate_not_before;
+        validation
     }
 
-    pub async fn validate(&self, token: &str, header: &Header) -> Result<AuthorizationClaims, AuthenticationError> {
-        if !self.validation.algorithms.contains(&header.alg)
-            || header.kid.as_ref().is_none_or(|kid| kid.trim().is_empty())
-        {
-            return Err(AuthenticationError::InvalidToken);
-        }
+    pub async fn validate(&self, token: &str, header: &Header) -> Option<AuthorizationClaims> {
         {
             let cache = self.cache.read().await;
+
             if let Some(keys) = cache.peek(JWKS_CACHE_KEY)
-                && let Some(result) = self.validate_with_keys(keys, token, header)
+                && keys.iter().any(|key| key.matches(header))
             {
-                return result;
+                return Self::validate_with_keys(keys, token, header, &self.validation());
             }
         }
-        let keys = fetch_jwks(&self.client, &self.url).await.map_err(|_| {
-            tracing::warn!("jwks_refresh - unable to retrieve usable verification keys");
-            AuthenticationError::KeysUnavailable
-        })?;
-        let claims = self.validate_with_keys(&keys, token, header).unwrap_or(Err(AuthenticationError::InvalidToken));
-        self.cache.write().await.insert(JWKS_CACHE_KEY.to_owned(), keys);
-        claims
+
+        match fetch_jwks(&self.client, &self.url).await {
+            Ok(keys) => {
+                let key_count = keys.len();
+                let claims = Self::validate_with_keys(&keys, token, header, &self.validation());
+                self.cache.write().await.insert(JWKS_CACHE_KEY.to_owned(), keys);
+                tracing::info!("validate: SaaS JWKS cache refreshed {key_count}");
+
+                claims
+            },
+            Err(error) => {
+                tracing::info!("validate: unable to refresh SaaS JWKS {error:?}");
+                None
+            },
+        }
     }
 
     fn validate_with_keys(
-        &self,
         keys: &[VerificationKey],
         token: &str,
         header: &Header,
-    ) -> Option<Result<AuthorizationClaims, AuthenticationError>> {
-        let key = keys.iter().find(|key| key.matches(header))?;
-        Some(
-            decode::<Value>(token, &key.decoding_key, &self.validation)
-                .map(|token| AuthorizationClaims::from(token.claims))
-                .map_err(|_| AuthenticationError::InvalidToken),
-        )
+        validation: &Validation,
+    ) -> Option<AuthorizationClaims> {
+        keys.iter()
+            .filter(|key| key.matches(header))
+            .find_map(|key| Self::validate_and_decode_claims(token, &key.decoding_key, validation))
+    }
+
+    fn validate_and_decode_claims(
+        token: &str,
+        key: &DecodingKey,
+        validation: &Validation,
+    ) -> Option<AuthorizationClaims> {
+        let claims = decode::<Value>(token, key, validation)
+            .inspect_err(|e| {
+                debug!("validate_and_decode_claims: problem {e:?}");
+            })
+            .ok()?
+            .claims;
+
+        Some(AuthorizationClaims::from(claims))
     }
 }
 
-struct VerificationKey {
-    key_id: String,
-    decoding_key: DecodingKey,
-    algorithm: Option<jsonwebtoken::Algorithm>,
+pub struct VerificationKey {
+    pub(crate) key_id: Option<String>,
+    pub(crate) decoding_key: DecodingKey,
 }
 
 impl VerificationKey {
-    fn from_jwk(jwk: &Jwk) -> Result<Option<Self>, AuthorizationError> {
+    fn from_jwk(jwk: Jwk) -> Result<Option<Self>, AuthorizationError> {
         if jwk.common.public_key_use.as_ref().is_some_and(|key_use| key_use != &PublicKeyUse::Signature)
             || jwk.common.key_operations.as_ref().is_some_and(|operations| !operations.contains(&KeyOperations::Verify))
         {
             return Ok(None);
         }
-        let Some(key_id) = jwk.common.key_id.as_ref().filter(|kid| !kid.trim().is_empty()) else {
-            return Ok(None);
-        };
-        // Ignore symmetric and unsupported key types before decoding.
-        if !matches!(
-            jwk.algorithm,
-            jsonwebtoken::jwk::AlgorithmParameters::RSA(_) | jsonwebtoken::jwk::AlgorithmParameters::EllipticCurve(_)
-        ) {
+
+        let decoding_key = DecodingKey::from_jwk(&jwk).map_err(AuthorizationError::InvalidKey)?;
+        if !matches!(decoding_key.family(), AlgorithmFamily::Rsa | AlgorithmFamily::Ec) {
             return Ok(None);
         }
-        let algorithm = match jwk.common.key_algorithm {
-            Some(alg) => match jsonwebtoken::Algorithm::try_from(alg) {
-                Ok(alg) => Some(alg),
-                Err(_) => return Ok(None),
-            },
-            None => None,
-        };
-        let decoding_key = DecodingKey::from_jwk(jwk).map_err(AuthorizationError::InvalidKey)?;
-        Ok(Some(Self { key_id: key_id.clone(), decoding_key, algorithm }))
+
+        Ok(Some(Self { key_id: jwk.common.key_id, decoding_key }))
     }
 
-    fn matches(&self, header: &Header) -> bool {
-        header.kid.as_ref() == Some(&self.key_id)
-            && self.decoding_key.family() == header.alg.family()
-            && self.algorithm.is_none_or(|alg| alg == header.alg)
+    pub(super) fn matches(&self, header: &Header) -> bool {
+        self.decoding_key.family() == header.alg.family()
+            && header
+                .kid
+                .as_ref()
+                .is_none_or(|header_key_id| self.key_id.as_ref().is_none_or(|key_id| key_id == header_key_id))
     }
 }
 
@@ -133,7 +139,10 @@ async fn fetch_jwks(client: &reqwest::Client, url: &Url) -> Result<Vec<Verificat
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(AuthorizationError::JwksRequest)?;
-    if response.content_length().is_some_and(|length| length > JWKS_MAX_RESPONSE_BYTES as u64) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > u64::try_from(JWKS_MAX_RESPONSE_BYTES).unwrap_or(u64::MAX))
+    {
         return Err(AuthorizationError::JwksResponseTooLarge);
     }
     let mut body = Vec::new();
@@ -146,15 +155,19 @@ async fn fetch_jwks(client: &reqwest::Client, url: &Url) -> Result<Vec<Verificat
         body.extend_from_slice(&chunk);
     }
     let jwks = serde_json::from_slice::<JwkSet>(&body).map_err(AuthorizationError::InvalidJson)?;
-    let mut keys: Vec<VerificationKey> = Vec::new();
-    for jwk in jwks.keys {
-        if let Some(key) = VerificationKey::from_jwk(&jwk)? {
-            if keys.iter().any(|existing| existing.key_id == key.key_id) {
-                return Err(AuthorizationError::DuplicateKeyId);
-            }
+    if jwks.keys.is_empty() { Ok(Vec::new()) } else { validated_json_web_keys(jwks.keys) }
+}
+
+pub(super) fn validated_json_web_keys(
+    jwks: impl IntoIterator<Item = Jwk>,
+) -> Result<Vec<VerificationKey>, AuthorizationError> {
+    let mut keys = Vec::new();
+    for jwk in jwks {
+        if let Some(key) = VerificationKey::from_jwk(jwk)? {
             keys.push(key);
         }
     }
+
     if keys.is_empty() {
         return Err(AuthorizationError::NoSupportedKeys);
     }

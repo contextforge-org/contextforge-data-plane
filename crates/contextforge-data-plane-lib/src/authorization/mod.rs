@@ -24,7 +24,12 @@ pub enum Permission {
 pub fn get_authorization_service(
     config: &JwksConfig,
 ) -> Result<Arc<dyn AuthorizationService + Send + Sync>, AuthorizationError> {
-    let service = jwks::JwtAuthorizationService::new(config)?;
+    let service = jwks::JwtAuthorizationService::from_jwks_url(
+        config.url.clone(),
+        config.ca_cert_path.as_ref(),
+        config.issuer.clone(),
+        config.audiences.clone(),
+    )?;
     Ok(Arc::new(service) as Arc<dyn AuthorizationService + Send + Sync>)
 }
 
@@ -37,8 +42,6 @@ pub trait AuthorizationService: std::fmt::Debug {
 pub enum AuthenticationError {
     #[error("invalid bearer token")]
     InvalidToken,
-    #[error("verification keys unavailable")]
-    KeysUnavailable,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,8 +49,6 @@ pub enum AuthenticationError {
 pub enum AuthorizationError {
     #[error("JWT trust configuration requires a nonempty issuer and audience")]
     InvalidTrustConfiguration,
-    #[error("JWKS contains duplicate signing key IDs")]
-    DuplicateKeyId,
     #[error("SaaS JWKS contains no supported signing keys")]
     NoSupportedKeys,
     #[error("SaaS JWKS is invalid")]
