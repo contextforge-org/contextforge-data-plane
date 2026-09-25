@@ -42,7 +42,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type Result<T> = std::result::Result<T, Error>;
 
 use crate::{
-    authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor},
+    authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor, Permission},
     config_stores::RedisStore,
     layers::{
         claims_id::claims_layer,
@@ -52,10 +52,7 @@ use crate::{
         virtual_host_id::virtual_host_id_layer,
     },
 };
-pub use authorization::{
-    AuthenticationError, AuthorizationClaims, AuthorizationService, AuthorizedPrincipal, Permission,
-    get_authorization_service,
-};
+pub use authorization::{AuthorizationClaims, AuthorizationService, get_authorization_service};
 pub use layers::permission::require_permission;
 
 #[derive(Clone)]
