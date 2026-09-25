@@ -42,7 +42,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type Result<T> = std::result::Result<T, Error>;
 
 use crate::{
-    authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor},
+    authorization::{CelPrincipalExtractor, DefaultPrincipalExtractor, Permission},
     config_stores::RedisStore,
     layers::{
         claims_id::claims_layer,
@@ -53,6 +53,7 @@ use crate::{
     },
 };
 pub use authorization::{AuthorizationClaims, AuthorizationService, get_authorization_service};
+pub use layers::permission::require_permission;
 
 #[derive(Clone)]
 pub enum UserConfigStoreType {
@@ -143,7 +144,8 @@ impl Gateway {
         let app = axum::Router::new()
             .nest_service("/servers/{virtual_host_name}/mcp", mcp_service)
             .layer(middleware::from_fn(virtual_host_config_layer))
-            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer));
+            .layer(middleware::from_fn_with_state(mcp_gateway_state.clone(), user_config_store_layer))
+            .layer(middleware::from_fn_with_state(Permission::MCPUser, require_permission));
 
         let app = if let Some(cel_principal_extractor_path) = config.cel_principal_extractor_path.as_ref() {
             app.layer(layers::PrincipalExtractorLayer::new(CelPrincipalExtractor::from_file(

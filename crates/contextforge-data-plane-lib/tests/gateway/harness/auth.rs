@@ -19,6 +19,7 @@ fn default_claims(user_id: &str) -> serde_json::Value {
         "iss": "mcpgateway",
         "sub": user_id,
         "tenant_id": "test_tenant",
+        "role": "user",
         "aud": "mcpgateway-api",
         "exp": now + TEST_TOKEN_TTL_SECS,
         "iat": now,

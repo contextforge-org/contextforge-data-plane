@@ -6,3 +6,5 @@ pub mod virtual_host_config;
 pub mod virtual_host_id;
 
 pub use principal_extractor::PrincipalExtractorLayer;
+
+pub mod permission;

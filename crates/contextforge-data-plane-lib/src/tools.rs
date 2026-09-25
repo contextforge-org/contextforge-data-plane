@@ -98,6 +98,8 @@ pub async fn get_token(
         "iss": "contexforge-dataplane",
         "sub": user_id.clone(),
         "aud": "contexforge-dataplane-audience",
+        "role": "user",
+        "woUserId": user_id.clone(),
         "exp": now + Duration::from_hours(1).as_secs(),
         "nbf": now - Duration::from_mins(1).as_secs(),
         "iat": now,

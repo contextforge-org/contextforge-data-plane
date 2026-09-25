@@ -15,6 +15,12 @@ pub use principal_extractor::{
     AuthorizedPrincipal, CelPrincipalExtractor, DefaultPrincipalExtractor, PrincipalExtractor,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Permission {
+    Admin,
+    MCPUser,
+}
+
 pub fn get_authorization_service(
     config: &JwksConfig,
 ) -> Result<Arc<dyn AuthorizationService + Send + Sync>, AuthorizationError> {
@@ -25,6 +31,12 @@ pub fn get_authorization_service(
 #[async_trait]
 pub trait AuthorizationService: std::fmt::Debug {
     async fn authorize(&self, authorization_token: &HeaderValue) -> Option<AuthorizationClaims>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AuthenticationError {
+    #[error("invalid bearer token")]
+    InvalidToken,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -84,6 +96,12 @@ pub struct Idp {
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationClaims {
     value: serde_json::Value,
+}
+
+impl AuthorizationClaims {
+    pub fn as_value(&self) -> &serde_json::Value {
+        &self.value
+    }
 }
 
 impl From<serde_json::Value> for AuthorizationClaims {
