@@ -38,12 +38,11 @@ async fn get_jwks(State(state): State<ContextForgeDataPlaneAppState>) -> Respons
             .into_response();
     };
 
-    let Ok(mut key) = Jwk::from_encoding_key(&key, jsonwebtoken::Algorithm::RS256) else {
+    let Ok(key) = Jwk::from_encoding_key(&key, jsonwebtoken::Algorithm::RS256) else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "Can't find the encoding key or the format is wrong")
             .into_response();
     };
 
-    key.common.key_id = Some("test".to_owned());
     let keys = vec![key];
     (StatusCode::OK, [(CACHE_CONTROL, JWKS_CACHE_CONTROL)], Json(JwkSet { keys })).into_response()
 }
