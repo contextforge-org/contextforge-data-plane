@@ -9,8 +9,6 @@ use axum::{
 };
 use http::StatusCode;
 
-/// Reusable API-level guard. Install after verified principal extraction and before
-/// configuration or backend access. Use `Admin` for future management routes.
 pub async fn require_permission(State(permission): State<Permission>, request: Request, next: Next) -> Response {
     if request.extensions().get::<AuthorizedPrincipal>().is_none() {
         return unauthorized_response("Missing verified identity");
@@ -25,7 +23,7 @@ pub async fn require_permission(State(permission): State<Permission>, request: R
     }
 }
 
-/// Provisional PoC role mapping, using only the original verified token claims.
+/// Test role mapping; awaiting confirmation from WxO.
 fn has_permission(claims: &AuthorizationClaims, permission: Permission) -> Result<bool, AuthenticationError> {
     let allows = |role: &str| match role {
         "admin" => true,
