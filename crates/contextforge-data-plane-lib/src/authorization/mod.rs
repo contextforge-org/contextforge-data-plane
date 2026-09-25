@@ -92,7 +92,7 @@ pub struct Idp {
     iss: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, TypedBuilder)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizationClaims {
     value: serde_json::Value,
@@ -101,12 +101,6 @@ pub struct AuthorizationClaims {
 impl AuthorizationClaims {
     pub fn as_value(&self) -> &serde_json::Value {
         &self.value
-    }
-}
-
-impl std::fmt::Debug for AuthorizationClaims {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AuthorizationClaims").finish_non_exhaustive()
     }
 }
 

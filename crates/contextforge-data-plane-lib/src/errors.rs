@@ -2,9 +2,7 @@ use axum::response::Response;
 use http::{StatusCode, header};
 
 pub(crate) fn unauthorized_response(message: &str) -> Response {
-    let mut response = custom_error(StatusCode::UNAUTHORIZED, message);
-    response.headers_mut().insert(header::WWW_AUTHENTICATE, http::HeaderValue::from_static("Bearer"));
-    response
+    custom_error(StatusCode::UNAUTHORIZED, message)
 }
 
 pub(crate) fn bad_request(message: &str) -> Response {
