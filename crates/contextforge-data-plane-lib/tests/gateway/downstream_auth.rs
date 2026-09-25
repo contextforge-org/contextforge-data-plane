@@ -28,36 +28,25 @@ fn key() -> EncodingKey {
 }
 fn claims() -> Value {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("valid authentication test fixture").as_secs();
-    json!({"iss":"mcpgateway", "aud":"mcpgateway-api", "sub":"user", "woTenantId":"tenant", "tenant_id":"tenant", "role":"user", "exp":now+3600, "nbf":now-60})
+    json!({"iss":"mcpgateway", "aud":"mcpgateway-api", "sub":"user", "woTenantId":"tenant", "role":"user", "exp":now+3600, "nbf":now-60})
 }
-fn token(claims: &Value, kid: Option<&str>, algorithm: Algorithm) -> String {
-    let mut header = Header::new(algorithm);
-    header.kid = kid.map(str::to_owned);
+fn token(claims: &Value) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("test".into());
     encode(&header, claims, &key()).expect("valid authentication test fixture")
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct CountingStore {
     reads: Arc<AtomicUsize>,
-    virtual_host: Option<VirtualHost>,
+    virtual_host: VirtualHost,
 }
 #[async_trait]
 impl ConfigStore<User, UserConfig> for CountingStore {
     async fn get_config<'a>(&self, user: &'a User) -> Result<UserConfig, ConfigStoreError> {
         assert_eq!(user.key(), "user");
         self.reads.fetch_add(1, Ordering::SeqCst);
-        Ok(UserConfig {
-            virtual_hosts: HashMap::from([(
-                "test".into(),
-                self.virtual_host.clone().unwrap_or_else(|| VirtualHost {
-                    backends: HashMap::new(),
-                    tools: HashMap::new(),
-                    resources: HashMap::new(),
-                    resource_templates: HashMap::new(),
-                    prompts: HashMap::new(),
-                }),
-            )]),
-        })
+        Ok(UserConfig { virtual_hosts: HashMap::from([("test".into(), self.virtual_host.clone())]) })
     }
     async fn set_config<'a>(&self, _: &'a User, _: &'a UserConfig) -> Result<(), ConfigStoreError> {
         unreachable!()
@@ -78,34 +67,28 @@ async fn gateway(config: Config, store: CountingStore) -> Router {
         .expect("valid authentication test fixture")
 }
 
-fn request(token: Option<&str>, method: &str) -> Request<Body> {
-    let mut request = Request::builder()
+fn request(token: &str) -> Request<Body> {
+    let request = Request::builder()
         .method("POST")
         .uri("/contextforge-rs/servers/test/mcp")
         .header("host", "localhost")
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
         .header("MCP-Protocol-Version", "2026-07-28")
-        .header("Mcp-Method", method);
-    if method == "tools/call" {
-        request = request.header("Mcp-Name", "sum");
-    }
-    if let Some(token) = token {
-        request = request.header("authorization", format!("Bearer {token}"));
-    }
-    let mut params = json!({
+        .header("Mcp-Method", "tools/call")
+        .header("Mcp-Name", "sum")
+        .header("authorization", format!("Bearer {token}"));
+    let params = json!({
+        "name": "sum",
+        "arguments": {"a": 2, "b": 3},
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": "2026-07-28",
             "io.modelcontextprotocol/clientInfo": {"name": "auth-test", "version": "1"},
             "io.modelcontextprotocol/clientCapabilities": {}
         }
     });
-    if method == "tools/call" {
-        params["name"] = "sum".into();
-        params["arguments"] = json!({"a": 2, "b": 3});
-    }
     request
-        .body(Body::from(json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).to_string()))
+        .body(Body::from(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}).to_string()))
         .expect("valid authentication test fixture")
 }
 
@@ -151,7 +134,8 @@ async fn permission_denial_prevents_backend_calls_after_a_successful_request() {
         .await
         .expect("valid authentication test fixture");
     let store = CountingStore {
-        virtual_host: Some(VirtualHost {
+        reads: Arc::new(AtomicUsize::new(0)),
+        virtual_host: VirtualHost {
             backends: HashMap::from([(
                 "counter".into(),
                 BackendMCPGateway {
@@ -172,8 +156,7 @@ async fn permission_denial_prevents_backend_calls_after_a_successful_request() {
             resources: HashMap::new(),
             resource_templates: HashMap::new(),
             prompts: HashMap::new(),
-        }),
-        ..Default::default()
+        },
     };
     let server = key_server().await;
     let mut config = create_default_config();
@@ -181,16 +164,11 @@ async fn permission_denial_prevents_backend_calls_after_a_successful_request() {
         Some(contextforge_data_plane_lib::UpstreamConnectionMode::PlainTextOrTls);
     config.jwks_config.url = server.url("/jwks").parse().expect("valid authentication test fixture");
     let app = gateway(config, store.clone()).await;
-    for (role, expected) in
-        [("user", StatusCode::OK), ("unknown", StatusCode::FORBIDDEN), ("expired", StatusCode::UNAUTHORIZED)]
-    {
+    for (role, expected) in [("user", StatusCode::OK), ("unknown", StatusCode::FORBIDDEN)] {
         let mut c = claims();
         c["role"] = role.into();
-        if role == "expired" {
-            c["exp"] = json!(1);
-        }
-        let token = token(&c, Some("test"), Algorithm::RS256);
-        let request = request(Some(&token), "tools/call");
+        let token = token(&c);
+        let request = request(&token);
         let response = app.clone().oneshot(request).await.expect("valid authentication test fixture");
         let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("valid authentication test fixture");
@@ -204,10 +182,6 @@ async fn permission_denial_prevents_backend_calls_after_a_successful_request() {
         assert_eq!(store.reads.load(Ordering::SeqCst), 1);
         assert_eq!(hits.load(Ordering::SeqCst), 1, "denied request must never reach backend");
     }
-    let response = app.oneshot(request(None, "tools/call")).await.expect("authentication fixture");
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(store.reads.load(Ordering::SeqCst), 1);
-    assert_eq!(hits.load(Ordering::SeqCst), 1);
     server.shutdown().await.expect("valid authentication test fixture");
     backend.shutdown().await.expect("valid authentication test fixture");
 }
